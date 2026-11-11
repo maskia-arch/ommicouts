@@ -955,6 +955,35 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                     )}
                   </div>
 
+                  {/* Direct Contact / Provider Info directly below Title & Specs */}
+                  {user && (item.contact_phone || item.contact_email || item.contact_name) && (
+                    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs">
+                      {item.contact_name && (
+                        <span className="line-clamp-1 font-medium text-slate-200" title={item.contact_name}>
+                          {item.contact_name}
+                        </span>
+                      )}
+                      {item.contact_phone && (
+                        <a
+                          href={`tel:${item.contact_phone}`}
+                          className="inline-flex items-center gap-1 font-semibold text-emerald-300 hover:underline"
+                        >
+                          <Phone className="h-3 w-3 shrink-0" />
+                          {item.contact_phone}
+                        </a>
+                      )}
+                      {item.contact_email && (
+                        <a
+                          href={`mailto:${item.contact_email}`}
+                          className="inline-flex items-center gap-1 font-semibold text-sky-300 hover:underline"
+                        >
+                          <Mail className="h-3 w-3 shrink-0" />
+                          {item.contact_email}
+                        </a>
+                      )}
+                    </div>
+                  )}
+
                   {/* Rent Breakdown */}
                   <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/70 p-3">
                     <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -1109,32 +1138,6 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                           <ExternalLink className="h-3.5 w-3.5" />
                         </a>
                       </div>
-
-                      {(item.contact_phone || item.contact_email || item.contact_name) && (
-                        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs">
-                          {item.contact_name && (
-                            <span className="font-medium text-slate-200">{item.contact_name}</span>
-                          )}
-                          {item.contact_phone && (
-                            <a
-                              href={`tel:${item.contact_phone}`}
-                              className="inline-flex items-center gap-1 font-semibold text-emerald-300 hover:underline"
-                            >
-                              <Phone className="h-3 w-3" />
-                              {item.contact_phone}
-                            </a>
-                          )}
-                          {item.contact_email && (
-                            <a
-                              href={`mailto:${item.contact_email}`}
-                              className="inline-flex items-center gap-1 font-semibold text-sky-300 hover:underline"
-                            >
-                              <Mail className="h-3 w-3" />
-                              {item.contact_email}
-                            </a>
-                          )}
-                        </div>
-                      )}
 
                       <div className="flex items-center justify-end gap-2 pt-0.5 text-[11px]">
                         <button
