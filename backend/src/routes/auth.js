@@ -309,17 +309,18 @@ router.post('/me/applications', requireUserAuth, async (req, res) => {
       return res.status(404).json({ error: 'Wohnungsangebot nicht gefunden.' });
     }
 
+    const contactedAt = status === 'saved' ? null : new Date();
     const { rows } = await pool.query(
       `INSERT INTO user_applications (user_id, listing_id, portal, status, message_text, notes, contacted_at)
-       VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $4 = 'saved' THEN NULL ELSE NOW() END)
+       VALUES ($1, $2, $3, $4::varchar, $5, $6, $7)
        ON CONFLICT (user_id, listing_id) DO UPDATE SET
          status = EXCLUDED.status,
          message_text = COALESCE(EXCLUDED.message_text, user_applications.message_text),
          notes = COALESCE(EXCLUDED.notes, user_applications.notes),
-         contacted_at = COALESCE(user_applications.contacted_at, CASE WHEN EXCLUDED.status = 'saved' THEN NULL ELSE NOW() END),
+         contacted_at = COALESCE(user_applications.contacted_at, EXCLUDED.contacted_at),
          updated_at = NOW()
-       RETURNING *`,
-      [req.user.id, listingId, listingRes.rows[0].portal, status, messageText, notes]
+       RETURNING id, user_id, listing_id, portal, status, status AS application_status, message_text, notes, contacted_at, created_at, updated_at`,
+      [req.user.id, listingId, listingRes.rows[0].portal, status, messageText, notes, contactedAt]
     );
 
     return res.status(201).json({ application: rows[0] });
@@ -337,16 +338,17 @@ router.patch('/me/applications/:id', requireUserAuth, async (req, res) => {
         ? req.body.status
         : null;
     const nextNotes = req.body?.notes !== undefined ? String(req.body.notes).slice(0, 2000) : null;
+    const markContacted = ['contacted', 'viewing', 'accepted', 'rejected'].includes(nextStatus);
 
     const { rows } = await pool.query(
       `UPDATE user_applications
-       SET status = COALESCE($1, status),
+       SET status = COALESCE($1::varchar, status),
            notes = COALESCE($2, notes),
-           contacted_at = CASE WHEN $1 IN ('contacted', 'viewing', 'accepted', 'rejected') AND contacted_at IS NULL THEN NOW() ELSE contacted_at END,
+           contacted_at = CASE WHEN $3::boolean AND contacted_at IS NULL THEN NOW() ELSE contacted_at END,
            updated_at = NOW()
-       WHERE id = $3 AND user_id = $4
-       RETURNING *`,
-      [nextStatus, nextNotes, id, req.user.id]
+       WHERE id = $4 AND user_id = $5
+       RETURNING id, user_id, listing_id, portal, status, status AS application_status, message_text, notes, contacted_at, created_at, updated_at`,
+      [nextStatus, nextNotes, markContacted, id, req.user.id]
     );
 
     if (rows.length === 0) {
