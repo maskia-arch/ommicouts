@@ -75,7 +75,22 @@ async function finishLog(
   );
 }
 
+async function isListingSuppressed(externalId, url = null) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM suppressed_listings WHERE external_id = $1 OR ($2::text IS NOT NULL AND url = $2)
+     UNION ALL
+     SELECT 1 FROM listings WHERE external_id = $1 AND status = 'manual_hidden'
+     LIMIT 1`,
+    [externalId, url]
+  );
+  return rows.length > 0;
+}
+
 async function upsertParsedListing(parsed, rules) {
+  if (await isListingSuppressed(parsed.external_id, parsed.url)) {
+    return null;
+  }
+
   const calculatedBruttokalt = computeBruttokalt(parsed.cold_rent, parsed.additional_costs);
   const matchedMinBgSize = findMatchedMinBgSize(calculatedBruttokalt, rules);
 
@@ -84,9 +99,10 @@ async function upsertParsedListing(parsed, rules) {
        external_id, portal, title, url, city, district, zipcode,
        cold_rent, additional_costs, heating_costs, calculated_bruttokalt,
        sqm, rooms, is_private_landlord, wbs_required, matched_min_bg_size,
+       contact_name, contact_phone, contact_email,
        status, first_seen_at, last_seen_at
      )
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'active',NOW(),NOW())
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'active',NOW(),NOW())
      ON CONFLICT (external_id) DO UPDATE SET
        title = EXCLUDED.title,
        url = EXCLUDED.url,
@@ -102,6 +118,9 @@ async function upsertParsedListing(parsed, rules) {
        is_private_landlord = EXCLUDED.is_private_landlord,
        wbs_required = EXCLUDED.wbs_required,
        matched_min_bg_size = EXCLUDED.matched_min_bg_size,
+       contact_name = COALESCE(NULLIF(listings.contact_name, ''), EXCLUDED.contact_name),
+       contact_phone = COALESCE(NULLIF(listings.contact_phone, ''), EXCLUDED.contact_phone),
+       contact_email = COALESCE(NULLIF(listings.contact_email, ''), EXCLUDED.contact_email),
        status = CASE WHEN listings.status = 'manual_hidden' THEN 'manual_hidden' ELSE 'active' END,
        last_seen_at = NOW()
      RETURNING *`,
@@ -122,6 +141,9 @@ async function upsertParsedListing(parsed, rules) {
       parsed.is_private_landlord,
       parsed.wbs_required,
       matchedMinBgSize,
+      parsed.contact_name || null,
+      parsed.contact_phone || null,
+      parsed.contact_email || null,
     ]
   );
 
@@ -156,6 +178,15 @@ export async function crawlSingleUrl(
     }
 
     const parsed = parseListingDetail(res.html, res.finalUrl || url, portal, city);
+    if (await isListingSuppressed(parsed.external_id, parsed.url)) {
+      const msg = 'Skipped: Inserat wurde vom Administrator ausgeblendet/gelöscht';
+      await finishLog(log.id, log.started_at, {
+        status: 'success',
+        errorMessage: msg,
+        details: { external_id: parsed.external_id, url: parsed.url },
+      });
+      return { ok: false, reason: msg };
+    }
     const zipPrefixes = await getCityZipPrefixes(city);
     const validation = validateListing(parsed, city, { zipPrefixes });
 
@@ -258,12 +289,28 @@ export async function runDeltaPoll({ configId = null } = {}) {
 
           const extIds = candidates.map((c) => c.externalId);
           const { rows: existingRows } = await pool.query(
-            `SELECT external_id FROM listings WHERE external_id = ANY($1::text[])`,
+            `SELECT external_id, status FROM listings WHERE external_id = ANY($1::text[])`,
             [extIds]
           );
-          const knownSet = new Set(existingRows.map((r) => r.external_id));
+          const { rows: suppressedRows } = await pool.query(
+            `SELECT external_id FROM suppressed_listings WHERE external_id = ANY($1::text[])`,
+            [extIds]
+          );
+
+          const hiddenSet = new Set(
+            existingRows.filter((r) => r.status === 'manual_hidden').map((r) => r.external_id)
+          );
+          const suppressedSet = new Set(suppressedRows.map((r) => r.external_id));
+          const knownSet = new Set(
+            existingRows.filter((r) => r.status !== 'manual_hidden').map((r) => r.external_id)
+          );
 
           for (const candidate of candidates) {
+            if (suppressedSet.has(candidate.externalId) || hiddenSet.has(candidate.externalId)) {
+              skippedCount++;
+              continue;
+            }
+
             if (knownSet.has(candidate.externalId)) {
               consecutiveKnown++;
               updatedCount++;
@@ -344,8 +391,12 @@ export async function runDeltaPoll({ configId = null } = {}) {
               continue;
             }
 
-            await upsertParsedListing(parsed, rules);
-            newCount++;
+            const saved = await upsertParsedListing(parsed, rules);
+            if (saved) {
+              newCount++;
+            } else {
+              skippedCount++;
+            }
           }
 
           if (!stoppedEarly && page === 1) {
@@ -452,7 +503,25 @@ export async function runReconciler({ batchLimit = 60 } = {}) {
           );
           offlineCount++;
         } else if (res.statusCode >= 200 && res.statusCode < 400) {
-          await pool.query(`UPDATE listings SET last_seen_at = NOW() WHERE id = $1`, [item.id]);
+          const parsedContact = parseListingDetail(
+            res.html,
+            res.finalUrl || item.url,
+            item.portal
+          );
+          await pool.query(
+            `UPDATE listings
+             SET contact_name = COALESCE(NULLIF(contact_name, ''), $2),
+                 contact_phone = COALESCE(NULLIF(contact_phone, ''), $3),
+                 contact_email = COALESCE(NULLIF(contact_email, ''), $4),
+                 last_seen_at = NOW()
+             WHERE id = $1`,
+            [
+              item.id,
+              parsedContact.contact_name || null,
+              parsedContact.contact_phone || null,
+              parsedContact.contact_email || null,
+            ]
+          );
           updatedCount++;
         }
       } catch (err) {

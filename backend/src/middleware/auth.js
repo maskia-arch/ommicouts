@@ -5,6 +5,7 @@ import {
   parseCookieHeader,
   sanitizeUser,
   SESSION_COOKIE_NAME,
+  USER_WITH_ORG_SELECT,
   verifyUserToken,
 } from '../services/userAuth.js';
 
@@ -71,7 +72,9 @@ async function resolveAuthenticatedUser(req) {
   const payload = verifyUserToken(token);
   if (!payload?.sub) return { user: null, reason: 'invalid' };
 
-  const { rows } = await pool.query(`SELECT * FROM users WHERE id = $1 LIMIT 1`, [payload.sub]);
+  const { rows } = await pool.query(`${USER_WITH_ORG_SELECT} WHERE u.id = $1 LIMIT 1`, [
+    payload.sub,
+  ]);
   if (rows.length === 0) return { user: null, reason: 'not_found' };
   if (rows[0].status !== 'active') return { user: null, reason: 'blocked' };
 
@@ -106,4 +109,26 @@ export async function requireUserAuth(req, res, next) {
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
+}
+
+export function requireActiveOrganization(req, res, next) {
+  if (!req.user || req.user.account_type !== 'organization') {
+    return res.status(403).json({
+      error: 'Diese Funktion steht nur aktiven Organisationen zur Verfügung.',
+      code: 'ORG_REQUIRED',
+    });
+  }
+  if (req.user.org_status === 'revoked') {
+    return res.status(403).json({
+      error: 'Ihr Organisations-Key wurde widerrufen. Bitte wenden Sie sich an den Administrator.',
+      code: 'ORG_LICENSE_REVOKED',
+    });
+  }
+  if (req.user.org_status !== 'active') {
+    return res.status(403).json({
+      error: 'Ihre Organisations-Lizenz ist abgelaufen. Bitte erneuern Sie diese mit einem gültigen Key.',
+      code: 'ORG_LICENSE_EXPIRED',
+    });
+  }
+  return next();
 }

@@ -1,6 +1,16 @@
 import crypto from 'node:crypto';
 import { config } from '../config.js';
 
+export const USER_WITH_ORG_SELECT = `
+  SELECT u.*,
+         ok.key_prefix AS org_key_prefix,
+         ok.status AS org_key_status,
+         ok.is_unlimited AS org_key_unlimited,
+         ok.expires_at AS org_key_expires_at
+  FROM users u
+  LEFT JOIN organization_keys ok ON ok.id = u.org_key_id
+`;
+
 export const SESSION_COOKIE_NAME = 'jcimmo_session';
 
 export const PORTAL_KEYS = [
@@ -122,11 +132,83 @@ export function normalizeLinkedPortals(raw) {
   return result;
 }
 
+export function generateOrgLicenseKey() {
+  const hex = crypto.randomBytes(10).toString('hex').toUpperCase();
+  const groups = hex.match(/.{1,4}/g) || [hex];
+  return `ORG-${groups.join('-')}`;
+}
+
+export function normalizeOrgKeyInput(rawKey) {
+  return String(rawKey || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '');
+}
+
+export function hashOrgKey(rawKey) {
+  const normalized = normalizeOrgKeyInput(rawKey);
+  if (!normalized) return '';
+  return crypto.createHash('sha256').update(normalized).digest('hex');
+}
+
+export function computeOrgLicenseState(row, nowMs = Date.now()) {
+  if (!row || row.account_type !== 'organization') {
+    return 'none';
+  }
+  if (row.org_key_status === 'revoked') {
+    return 'revoked';
+  }
+  const isUnlimited =
+    row.org_key_id && row.org_key_unlimited !== undefined && row.org_key_unlimited !== null
+      ? Boolean(row.org_key_unlimited)
+      : Boolean(row.org_license_unlimited);
+  if (isUnlimited) {
+    return 'active';
+  }
+  const rawExp =
+    row.org_key_id && row.org_key_expires_at !== undefined
+      ? row.org_key_expires_at
+      : row.org_license_expires_at;
+  if (!rawExp) {
+    return 'expired';
+  }
+  const expMs = new Date(rawExp).getTime();
+  if (!Number.isFinite(expMs) || expMs <= nowMs) {
+    return 'expired';
+  }
+  return 'active';
+}
+
 export function sanitizeUser(row) {
   if (!row) return null;
-  const { password_hash: _ignored, ...rest } = row;
+  const {
+    password_hash: _ignored,
+    org_key_hash: _ignoredKeyHash,
+    org_key_status: _ignoredKeyStatus,
+    org_key_unlimited: _ignoredKeyUnl,
+    org_key_expires_at: _ignoredKeyExp,
+    ...rest
+  } = row;
+  const effectiveUnlimited =
+    row.org_key_id && row.org_key_unlimited !== undefined && row.org_key_unlimited !== null
+      ? Boolean(row.org_key_unlimited)
+      : Boolean(row.org_license_unlimited);
+  const effectiveExpiresAt =
+    row.org_key_id && row.org_key_expires_at !== undefined
+      ? row.org_key_expires_at
+      : row.org_license_expires_at || null;
+
   return {
     ...rest,
+    account_type: row.account_type || 'user',
+    org_name: row.org_name || '',
+    org_subtitle: row.org_subtitle || '',
+    org_logo_url: row.org_logo_url || '',
+    org_contact: row.org_contact || '',
+    org_license_unlimited: effectiveUnlimited,
+    org_license_expires_at: effectiveExpiresAt,
+    org_key_prefix: row.org_key_prefix || null,
+    org_status: computeOrgLicenseState(row),
     linked_portals: normalizeLinkedPortals(row.linked_portals),
   };
 }

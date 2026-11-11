@@ -41,6 +41,8 @@ async function proxyToBackend(
     const responseHeaders = new Headers();
     const contentType = upstream.headers.get('content-type');
     if (contentType) responseHeaders.set('content-type', contentType);
+    const contentDisposition = upstream.headers.get('content-disposition');
+    if (contentDisposition) responseHeaders.set('content-disposition', contentDisposition);
 
     const setCookies =
       typeof upstream.headers.getSetCookie === 'function'

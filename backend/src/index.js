@@ -5,6 +5,7 @@ import { config } from './config.js';
 import { ensureDatabaseInitialized, pool } from './db.js';
 import adminRoutes from './routes/admin.js';
 import authRoutes from './routes/auth.js';
+import orgRoutes from './routes/org.js';
 import publicRoutes from './routes/public.js';
 import webhookRoutes from './routes/webhook.js';
 import { reloadSchedules, stopAllSchedules } from './scraper/scheduler.js';
@@ -39,6 +40,7 @@ app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 app.use('/api', publicRoutes);
 app.use('/api', authRoutes);
+app.use('/api/org', orgRoutes);
 app.use('/api/webhook', webhookRoutes);
 app.use('/api/admin', adminRoutes);
 

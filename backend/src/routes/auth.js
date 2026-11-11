@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { pool } from '../db.js';
 import { config } from '../config.js';
-import { optionalUserAuth, requireUserAuth } from '../middleware/auth.js';
+import { optionalUserAuth, requireActiveOrganization, requireUserAuth } from '../middleware/auth.js';
 import {
+  hashOrgKey,
   hashPassword,
   isValidEmail,
   normalizeEmail,
@@ -10,6 +11,7 @@ import {
   sanitizeUser,
   SESSION_COOKIE_NAME,
   signUserToken,
+  USER_WITH_ORG_SELECT,
   verifyPassword,
 } from '../services/userAuth.js';
 
@@ -142,10 +144,14 @@ router.post('/auth/login', async (req, res) => {
     }
 
     const updatedRes = await pool.query(
-      `UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1 RETURNING *`,
+      `UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1`,
       [rows[0].id]
     );
-    const user = sanitizeUser(updatedRes.rows[0]);
+    void updatedRes;
+    const fullRes = await pool.query(`${USER_WITH_ORG_SELECT} WHERE u.id = $1 LIMIT 1`, [
+      rows[0].id,
+    ]);
+    const user = sanitizeUser(fullRes.rows[0]);
     const token = signUserToken({ userId: user.id, email: user.email });
     setSessionCookie(req, res, token);
 
@@ -190,7 +196,7 @@ router.put('/me/profile', requireUserAuth, async (req, res) => {
         ? normalizeLinkedPortals(linked_portals)
         : req.user.linked_portals;
 
-    const { rows } = await pool.query(
+    await pool.query(
       `UPDATE users
        SET full_name = COALESCE($1, full_name),
            phone = COALESCE($2, phone),
@@ -203,8 +209,7 @@ router.put('/me/profile', requireUserAuth, async (req, res) => {
            address_schufa_directly = COALESCE($9, address_schufa_directly),
            linked_portals = $10::jsonb,
            updated_at = NOW()
-       WHERE id = $11
-       RETURNING *`,
+       WHERE id = $11`,
       [
         full_name !== undefined ? String(full_name).trim().slice(0, 150) : null,
         phone !== undefined ? String(phone).trim().slice(0, 60) : null,
@@ -220,7 +225,10 @@ router.put('/me/profile', requireUserAuth, async (req, res) => {
       ]
     );
 
-    return res.json({ user: sanitizeUser(rows[0]) });
+    const refreshed = await pool.query(`${USER_WITH_ORG_SELECT} WHERE u.id = $1 LIMIT 1`, [
+      req.user.id,
+    ]);
+    return res.json({ user: sanitizeUser(refreshed.rows[0]) });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -277,6 +285,9 @@ router.get('/me/applications', requireUserAuth, async (req, res) => {
          l.rooms,
          l.is_private_landlord,
          l.wbs_required,
+         l.contact_name,
+         l.contact_phone,
+         l.contact_email,
          l.status AS listing_status
        FROM user_applications ua
        JOIN listings l ON l.id = ua.listing_id
@@ -370,6 +381,282 @@ router.delete('/me/applications/:id', requireUserAuth, async (req, res) => {
       return res.status(404).json({ error: 'Eintrag nicht gefunden.' });
     }
     return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ------------------------------------------------------------------------------
+// User Hidden Listings (/api/me/hidden-listings)
+// ------------------------------------------------------------------------------
+router.get('/me/hidden-listings', requireUserAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT uhl.id, uhl.listing_id, uhl.created_at,
+              l.title, l.url, l.portal, l.city, l.district, l.zipcode,
+              l.calculated_bruttokalt, l.sqm, l.rooms, l.status AS listing_status
+       FROM user_hidden_listings uhl
+       JOIN listings l ON l.id = uhl.listing_id
+       WHERE uhl.user_id = $1
+       ORDER BY uhl.created_at DESC`,
+      [req.user.id]
+    );
+    return res.json({ hiddenListings: rows });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/me/hidden-listings', requireUserAuth, async (req, res) => {
+  try {
+    const listingId = String(req.body?.listing_id || '').trim();
+    if (!listingId) {
+      return res.status(400).json({ error: 'listing_id ist erforderlich.' });
+    }
+    await pool.query(
+      `INSERT INTO user_hidden_listings (user_id, listing_id)
+       VALUES ($1, $2)
+       ON CONFLICT (user_id, listing_id) DO NOTHING`,
+      [req.user.id, listingId]
+    );
+    return res.status(201).json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/me/hidden-listings/:listingId', requireUserAuth, async (req, res) => {
+  try {
+    await pool.query(
+      `DELETE FROM user_hidden_listings WHERE user_id = $1 AND listing_id = $2`,
+      [req.user.id, req.params.listingId]
+    );
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ------------------------------------------------------------------------------
+// Listing Reports (/api/me/reports)
+// ------------------------------------------------------------------------------
+export const REPORT_REASONS = {
+  no_jobcenter: 'Kein Jobcenter gewünscht / ausdrücklich abgelehnt',
+  wrong_description: 'Objektbeschreibung nicht zutreffend / fehlerhafte Beschreibung',
+  already_rented: 'Wohnung bereits vergeben / Anzeige nicht mehr aktuell',
+  wrong_price: 'Miete / Nebenkosten stimmen nicht (zu teuer)',
+  spam_fraud: 'Verdacht auf Fake-Anzeige / Betrug / Spam',
+  other: 'Sonstiger Grund',
+};
+
+router.post('/me/reports', requireUserAuth, async (req, res) => {
+  try {
+    const listingId = String(req.body?.listing_id || '').trim();
+    const reasonCode = String(req.body?.reason_code || '').trim();
+    const details = req.body?.details ? String(req.body.details).trim().slice(0, 1500) : null;
+    const alsoHide = Boolean(req.body?.also_hide);
+
+    if (!listingId) {
+      return res.status(400).json({ error: 'listing_id ist erforderlich.' });
+    }
+    if (!REPORT_REASONS[reasonCode]) {
+      return res.status(400).json({ error: 'Bitte einen gültigen Meldegrund auswählen.' });
+    }
+    if (reasonCode === 'other' && (!details || details.length < 5)) {
+      return res.status(400).json({ error: 'Bitte bei „Sonstiger Grund“ kurz den Grund beschreiben.' });
+    }
+
+    const listRes = await pool.query(
+      `SELECT id, external_id, portal, city, title, url FROM listings WHERE id = $1 LIMIT 1`,
+      [listingId]
+    );
+    if (listRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Wohnungsangebot nicht gefunden.' });
+    }
+    const l = listRes.rows[0];
+    const reasonLabel = REPORT_REASONS[reasonCode];
+
+    const { rows } = await pool.query(
+      `INSERT INTO listing_reports (
+         listing_id, listing_external_id, listing_portal, listing_city, listing_title, listing_url,
+         user_id, reason_code, reason_label, details, status
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open')
+       ON CONFLICT (listing_id, user_id) DO UPDATE SET
+         reason_code = EXCLUDED.reason_code,
+         reason_label = EXCLUDED.reason_label,
+         details = EXCLUDED.details,
+         status = 'open',
+         reviewed_at = NULL,
+         updated_at = NOW()
+       RETURNING *`,
+      [l.id, l.external_id, l.portal, l.city, l.title, l.url, req.user.id, reasonCode, reasonLabel, details]
+    );
+
+    if (alsoHide) {
+      await pool.query(
+        `INSERT INTO user_hidden_listings (user_id, listing_id)
+         VALUES ($1, $2)
+         ON CONFLICT (user_id, listing_id) DO NOTHING`,
+        [req.user.id, l.id]
+      );
+    }
+
+    return res.status(201).json({ report: rows[0] });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ------------------------------------------------------------------------------
+// Organization Activation & Profile Settings (/api/me/organization/*)
+// ------------------------------------------------------------------------------
+router.post('/me/organization/activate', requireUserAuth, async (req, res) => {
+  if (!checkAuthRateLimit(req, res)) return;
+
+  const rawKey = String(req.body?.key || '').trim();
+  const keyHash = hashOrgKey(rawKey);
+  if (!keyHash || rawKey.length < 10) {
+    return res.status(400).json({ error: 'Bitte einen gültigen Organisations-Key eingeben.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: keyRows } = await client.query(
+      `SELECT * FROM organization_keys WHERE key_hash = $1 FOR UPDATE`,
+      [keyHash]
+    );
+
+    if (keyRows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Dieser Organisations-Key wurde nicht gefunden.' });
+    }
+
+    const keyRow = keyRows[0];
+    if (keyRow.status !== 'active') {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Dieser Organisations-Key wurde widerrufen.' });
+    }
+
+    if (keyRow.redeemed_by_user_id && keyRow.redeemed_by_user_id !== req.user.id) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        error: 'Dieser Organisations-Key wurde bereits einem anderen Konto zugewiesen.',
+      });
+    }
+
+    let computedExpiresAt = null;
+    if (!keyRow.is_unlimited) {
+      if (keyRow.expires_at) {
+        if (new Date(keyRow.expires_at).getTime() <= Date.now()) {
+          await client.query('ROLLBACK');
+          return res.status(403).json({ error: 'Dieser Organisations-Key ist bereits abgelaufen.' });
+        }
+        computedExpiresAt = keyRow.expires_at;
+      } else {
+        const days = Math.max(1, Number(keyRow.duration_days) || 30);
+        computedExpiresAt = new Date(Date.now() + days * 86400 * 1000);
+      }
+    }
+
+    await client.query(
+      `UPDATE organization_keys
+       SET redeemed_by_user_id = $1,
+           redeemed_at = COALESCE(redeemed_at, NOW()),
+           expires_at = $2,
+           updated_at = NOW()
+       WHERE id = $3`,
+      [req.user.id, computedExpiresAt, keyRow.id]
+    );
+
+    const { rows: curUserRows } = await client.query(`SELECT * FROM users WHERE id = $1`, [
+      req.user.id,
+    ]);
+    const curUser = curUserRows[0];
+
+    const nextOrgName = keyRow.preset_org_name || curUser.org_name || curUser.full_name || '';
+    const nextOrgSubtitle = keyRow.preset_org_subtitle || curUser.org_subtitle || '';
+    const nextOrgLogoUrl = keyRow.preset_org_logo_url || curUser.org_logo_url || '';
+    const nextOrgContact = keyRow.preset_org_contact || curUser.org_contact || curUser.phone || '';
+    const nextPreferredCity = keyRow.preset_city || curUser.preferred_city || 'Gelsenkirchen';
+
+    await client.query(
+      `UPDATE users
+       SET account_type = 'organization',
+           org_key_id = $1,
+           org_name = $2,
+           org_subtitle = $3,
+           org_logo_url = $4,
+           org_contact = $5,
+           preferred_city = $6,
+           org_license_unlimited = $7,
+           org_license_expires_at = $8,
+           updated_at = NOW()
+       WHERE id = $9`,
+      [
+        keyRow.id,
+        nextOrgName,
+        nextOrgSubtitle,
+        nextOrgLogoUrl,
+        nextOrgContact,
+        nextPreferredCity,
+        Boolean(keyRow.is_unlimited),
+        computedExpiresAt,
+        req.user.id,
+      ]
+    );
+
+    await client.query('COMMIT');
+
+    const refreshed = await pool.query(`${USER_WITH_ORG_SELECT} WHERE u.id = $1 LIMIT 1`, [
+      req.user.id,
+    ]);
+    return res.json({ user: sanitizeUser(refreshed.rows[0]) });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    return res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+router.put('/me/organization/settings', requireUserAuth, requireActiveOrganization, async (req, res) => {
+  try {
+    const orgName = String(req.body?.org_name ?? req.user.org_name ?? '').trim().slice(0, 180);
+    const orgSubtitle = String(req.body?.org_subtitle ?? req.user.org_subtitle ?? '').trim().slice(0, 220);
+    const orgContact = String(req.body?.org_contact ?? req.user.org_contact ?? '').trim().slice(0, 500);
+    const rawLogo = req.body?.org_logo_url !== undefined ? String(req.body.org_logo_url || '').trim() : req.user.org_logo_url;
+
+    if (rawLogo) {
+      const isHttpsUrl = /^https?:\/\/.{4,1000}$/i.test(rawLogo);
+      const isSafeDataUri = /^data:image\/(png|jpe?g|webp);base64,[a-z0-9+/=]+$/i.test(rawLogo);
+      if (!isHttpsUrl && !isSafeDataUri) {
+        return res.status(400).json({
+          error: 'Logo muss entweder eine http(s)-URL oder ein hochgeladenes PNG/JPG/WebP-Bild sein.',
+        });
+      }
+      if (rawLogo.length > 550000) {
+        return res.status(400).json({ error: 'Logo-Datei ist zu groß (max. ca. 400 KB).' });
+      }
+    }
+
+    await pool.query(
+      `UPDATE users
+       SET org_name = $1,
+           org_subtitle = $2,
+           org_logo_url = $3,
+           org_contact = $4,
+           updated_at = NOW()
+       WHERE id = $5`,
+      [orgName, orgSubtitle, rawLogo || '', orgContact, req.user.id]
+    );
+
+    const refreshed = await pool.query(`${USER_WITH_ORG_SELECT} WHERE u.id = $1 LIMIT 1`, [
+      req.user.id,
+    ]);
+    return res.json({ user: sanitizeUser(refreshed.rows[0]) });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

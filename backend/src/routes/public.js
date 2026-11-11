@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { pool } from '../db.js';
+import { optionalUserAuth } from '../middleware/auth.js';
 import { getRulesForCity, resolveRuleForBgSize, round2 } from '../services/kduMatcher.js';
 
 const router = Router();
@@ -37,7 +38,7 @@ router.get('/kdu', async (req, res) => {
   }
 });
 
-router.get('/listings', async (req, res) => {
+router.get('/listings', optionalUserAuth, async (req, res) => {
   try {
     const city = String(req.query.city || 'Gelsenkirchen').trim();
     const bgSize = Math.min(15, Math.max(1, parseInt(req.query.bg_size || '1', 10) || 1));
@@ -66,6 +67,14 @@ router.get('/listings', async (req, res) => {
     const where = [`status = 'active'`, `LOWER(city) = LOWER($1)`, `calculated_bruttokalt IS NOT NULL`, `calculated_bruttokalt <= $2`];
     const params = [city, maxBruttokaltFilter];
     let idx = params.length;
+
+    if (req.user?.id) {
+      idx++;
+      where.push(
+        `NOT EXISTS (SELECT 1 FROM user_hidden_listings uhl WHERE uhl.user_id = $${idx} AND uhl.listing_id = listings.id)`
+      );
+      params.push(req.user.id);
+    }
 
     if (privateOnly) {
       where.push(`is_private_landlord = TRUE`);
@@ -115,6 +124,7 @@ router.get('/listings', async (req, res) => {
          id, external_id, portal, title, url, city, district, zipcode,
          cold_rent, additional_costs, heating_costs, calculated_bruttokalt,
          sqm, rooms, is_private_landlord, wbs_required, matched_min_bg_size,
+         contact_name, contact_phone, contact_email,
          first_seen_at, last_seen_at
        FROM listings
        WHERE ${whereSql}
@@ -131,6 +141,7 @@ router.get('/listings', async (req, res) => {
       [city]
     );
 
+    const isAuthenticated = Boolean(req.user?.id);
     const items = listRes.rows.map((row) => {
       const bk = Number(row.calculated_bruttokalt);
       const sqmNum = row.sqm !== null ? Number(row.sqm) : null;
@@ -143,6 +154,10 @@ router.get('/listings', async (req, res) => {
 
       return {
         ...row,
+        contact_name: isAuthenticated ? row.contact_name : null,
+        contact_phone: isAuthenticated ? row.contact_phone : null,
+        contact_email: isAuthenticated ? row.contact_email : null,
+        has_direct_contact: Boolean(row.contact_phone || row.contact_email),
         cold_rent: row.cold_rent !== null ? Number(row.cold_rent) : null,
         additional_costs: Number(row.additional_costs || 0),
         heating_costs: Number(row.heating_costs || 0),

@@ -292,6 +292,84 @@ CREATE TABLE IF NOT EXISTS user_applications (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_apps_user_id ON user_applications (user_id, updated_at DESC);
+
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS contact_name VARCHAR(180);
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS contact_phone VARCHAR(80);
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS contact_email VARCHAR(180);
+
+CREATE TABLE IF NOT EXISTS suppressed_listings (
+    id SERIAL PRIMARY KEY,
+    external_id VARCHAR(255) UNIQUE NOT NULL,
+    portal VARCHAR(50),
+    url TEXT,
+    title TEXT,
+    reason VARCHAR(120) NOT NULL DEFAULT 'admin_deleted',
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_suppressed_ext ON suppressed_listings (external_id);
+
+CREATE TABLE IF NOT EXISTS organization_keys (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    key_hash VARCHAR(64) UNIQUE NOT NULL,
+    key_prefix VARCHAR(32) NOT NULL,
+    label VARCHAR(160) NOT NULL DEFAULT '',
+    preset_org_name VARCHAR(180) NOT NULL DEFAULT '',
+    preset_org_subtitle VARCHAR(220) NOT NULL DEFAULT '',
+    preset_org_logo_url TEXT NOT NULL DEFAULT '',
+    preset_org_contact TEXT NOT NULL DEFAULT '',
+    preset_city VARCHAR(100) NOT NULL DEFAULT 'Gelsenkirchen',
+    is_unlimited BOOLEAN NOT NULL DEFAULT FALSE,
+    duration_days INT CHECK (duration_days IS NULL OR duration_days > 0),
+    expires_at TIMESTAMP,
+    status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked')),
+    redeemed_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    redeemed_at TIMESTAMP,
+    admin_note TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS account_type VARCHAR(20) NOT NULL DEFAULT 'user';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS org_key_id UUID REFERENCES organization_keys(id) ON DELETE SET NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS org_name VARCHAR(180) NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS org_subtitle VARCHAR(220) NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS org_logo_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS org_contact TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS org_license_unlimited BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS org_license_expires_at TIMESTAMP;
+
+CREATE TABLE IF NOT EXISTS listing_reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    listing_id UUID REFERENCES listings(id) ON DELETE SET NULL,
+    listing_external_id VARCHAR(255),
+    listing_portal VARCHAR(50),
+    listing_city VARCHAR(100),
+    listing_title TEXT,
+    listing_url TEXT,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    reason_code VARCHAR(60) NOT NULL,
+    reason_label VARCHAR(160) NOT NULL,
+    details TEXT,
+    status VARCHAR(30) NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved_hidden', 'resolved_deleted', 'dismissed')),
+    admin_note TEXT,
+    reviewed_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_report_user_listing UNIQUE (listing_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_listing_reports_status ON listing_reports (status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS user_hidden_listings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    listing_id UUID NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_user_hidden_listing UNIQUE (user_id, listing_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_hidden_user ON user_hidden_listings (user_id, created_at DESC);
 `;
 
 export async function cleanupInvalidListings() {

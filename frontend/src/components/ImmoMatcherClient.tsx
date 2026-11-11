@@ -7,14 +7,20 @@ import {
   Building2,
   CheckCircle2,
   ExternalLink,
+  EyeOff,
+  FileText,
   Filter,
+  Flag,
   Home,
   Info,
+  KeyRound,
   Lock,
   LogIn,
   LogOut,
+  Mail,
   MapPin,
   Minus,
+  Phone,
   Plus,
   RefreshCw,
   Search,
@@ -27,6 +33,7 @@ import {
 } from 'lucide-react';
 import type {
   ApplicationStatus,
+  HiddenListingItem,
   KduRule,
   ListingItem,
   ListingsResponse,
@@ -35,6 +42,8 @@ import type {
 } from '@/types/immo';
 import { ApplicationModal } from './ApplicationModal';
 import { AuthModal } from './AuthModal';
+import OrganizationListView from './OrganizationListView';
+import ReportListingModal from './ReportListingModal';
 import { UserAreaView } from './UserAreaView';
 
 const APP_STATUS_OPTIONS: Array<{ value: ApplicationStatus; label: string }> = [
@@ -100,9 +109,12 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
   const [user, setUser] = useState<UserProfile | null>(null);
   const [authLoaded, setAuthLoaded] = useState<boolean>(false);
   const [applications, setApplications] = useState<UserApplication[]>([]);
+  const [hiddenListings, setHiddenListings] = useState<HiddenListingItem[]>([]);
+  const [reportingListing, setReportingListing] = useState<ListingItem | null>(null);
+  const [openOrgSignal, setOpenOrgSignal] = useState<number>(0);
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
-  const [activeView, setActiveView] = useState<'search' | 'account'>('search');
+  const [activeView, setActiveView] = useState<'search' | 'account' | 'org'>('search');
 
   const fetchApplications = useCallback(async () => {
     try {
@@ -121,6 +133,23 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
     }
   }, []);
 
+  const fetchHiddenListings = useCallback(async () => {
+    try {
+      const res = await fetch('/api/me/hidden-listings', {
+        cache: 'no-store',
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        setHiddenListings([]);
+        return;
+      }
+      const json = await res.json();
+      setHiddenListings(Array.isArray(json.hiddenListings) ? json.hiddenListings : []);
+    } catch {
+      setHiddenListings([]);
+    }
+  }, []);
+
   const loadSession = useCallback(async () => {
     try {
       const res = await fetch('/api/auth/me', {
@@ -130,18 +159,20 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
       const json = await res.json();
       if (json?.authenticated && json.user) {
         setUser(json.user);
-        await fetchApplications();
+        await Promise.all([fetchApplications(), fetchHiddenListings()]);
       } else {
         setUser(null);
         setApplications([]);
+        setHiddenListings([]);
       }
     } catch {
       setUser(null);
       setApplications([]);
+      setHiddenListings([]);
     } finally {
       setAuthLoaded(true);
     }
-  }, [fetchApplications]);
+  }, [fetchApplications, fetchHiddenListings]);
 
   useEffect(() => {
     loadSession();
@@ -155,7 +186,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
     if (loggedInUser.bg_size) setBgSize(loggedInUser.bg_size);
     if (loggedInUser.benefit_type) setBenefitType(loggedInUser.benefit_type);
     setAuthModalOpen(false);
-    await fetchApplications();
+    await Promise.all([fetchApplications(), fetchHiddenListings()]);
   };
 
   const handleLogout = async () => {
@@ -166,6 +197,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
     }
     setUser(null);
     setApplications([]);
+    setHiddenListings([]);
     setActiveView('search');
   };
 
@@ -218,6 +250,35 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
     }
   };
 
+  const hideListing = async (item: ListingItem) => {
+    if (!user) return;
+    setUpdatingListingId(item.id);
+    try {
+      const res = await fetch('/api/me/hidden-listings', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ listing_id: item.id }),
+      });
+      if (res.ok) {
+        setData((prev) =>
+          prev
+            ? {
+                ...prev,
+                total: Math.max(0, prev.total - 1),
+                items: prev.items.filter((x) => x.id !== item.id),
+              }
+            : prev
+        );
+        await fetchHiddenListings();
+      }
+    } catch {
+      // ignore transient error
+    } finally {
+      setUpdatingListingId(null);
+    }
+  };
+
   const fetchListings = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -252,6 +313,12 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
   useEffect(() => {
     fetchListings();
   }, [fetchListings]);
+
+  const userId = user?.id || null;
+  useEffect(() => {
+    if (!authLoaded) return;
+    fetchListings();
+  }, [authLoaded, userId, fetchListings]);
 
   useEffect(() => {
     fetch('/api/kdu', { cache: 'no-store' })
@@ -324,6 +391,22 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                   <User className="h-3.5 w-3.5" />
                   Mein Bereich ({applications.length})
                 </button>
+                {user.account_type === 'organization' && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveView('org')}
+                    className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition ${
+                      activeView === 'org'
+                        ? 'bg-emerald-500 text-slate-950'
+                        : user.org_status === 'active'
+                          ? 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20'
+                          : 'border border-amber-500/50 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25'
+                    }`}
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    Wohnungsliste (Org)
+                  </button>
+                )}
                 <span className="hidden items-center rounded-xl border border-slate-800 bg-slate-900/70 px-2.5 py-2 text-xs text-slate-300 md:inline-flex">
                   {user.email}
                 </span>
@@ -376,14 +459,62 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
       </header>
 
       <main className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6 sm:py-8">
-        {activeView === 'account' && user ? (
+        {user && user.account_type === 'organization' && user.org_status !== 'active' && (
+          <div className="flex flex-col justify-between gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 sm:flex-row sm:items-center">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+              <div>
+                <div className="text-sm font-bold text-amber-200">
+                  {user.org_status === 'revoked'
+                    ? 'Deine Organisations-Lizenz wurde widerrufen'
+                    : 'Deine Organisations-Lizenz ist abgelaufen — bitte erneuern'}
+                </div>
+                <p className="mt-0.5 text-xs text-amber-100/90">
+                  {user.org_license_expires_at
+                    ? `Gültigkeit endete am ${new Date(user.org_license_expires_at).toLocaleDateString('de-DE')}. `
+                    : ''}
+                  Aktiviere unter „Organisation anmelden“ einen neuen Key oder lass deinen bestehenden Key verlängern, um weiterhin PDF-Wohnungslisten zu erstellen.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveView('account');
+                setOpenOrgSignal((n) => n + 1);
+              }}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-amber-500 px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-amber-400"
+            >
+              <KeyRound className="h-3.5 w-3.5" />
+              Lizenz jetzt erneuern
+            </button>
+          </div>
+        )}
+
+        {activeView === 'org' && user ? (
+          <OrganizationListView
+            user={user}
+            cities={cities}
+            onGoToOrgActivation={() => {
+              setActiveView('account');
+              setOpenOrgSignal((n) => n + 1);
+            }}
+          />
+        ) : activeView === 'account' && user ? (
           <UserAreaView
             user={user}
             cities={cities}
             applications={applications}
+            hiddenListings={hiddenListings}
             onUserUpdated={(updated) => setUser(updated)}
             onApplicationsChanged={fetchApplications}
+            onHiddenListingsChanged={() => {
+              fetchHiddenListings();
+              fetchListings();
+            }}
             onBackToSearch={() => setActiveView('search')}
+            onGoToOrgList={() => setActiveView('org')}
+            openOrgSignal={openOrgSignal}
           />
         ) : (
           <>
@@ -978,6 +1109,54 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                           <ExternalLink className="h-3.5 w-3.5" />
                         </a>
                       </div>
+
+                      {(item.contact_phone || item.contact_email || item.contact_name) && (
+                        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs">
+                          {item.contact_name && (
+                            <span className="font-medium text-slate-200">{item.contact_name}</span>
+                          )}
+                          {item.contact_phone && (
+                            <a
+                              href={`tel:${item.contact_phone}`}
+                              className="inline-flex items-center gap-1 font-semibold text-emerald-300 hover:underline"
+                            >
+                              <Phone className="h-3 w-3" />
+                              {item.contact_phone}
+                            </a>
+                          )}
+                          {item.contact_email && (
+                            <a
+                              href={`mailto:${item.contact_email}`}
+                              className="inline-flex items-center gap-1 font-semibold text-sky-300 hover:underline"
+                            >
+                              <Mail className="h-3 w-3" />
+                              {item.contact_email}
+                            </a>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-end gap-2 pt-0.5 text-[11px]">
+                        <button
+                          type="button"
+                          disabled={updatingListingId === item.id}
+                          onClick={() => hideListing(item)}
+                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-slate-400 transition hover:bg-slate-800 hover:text-slate-200 disabled:opacity-50"
+                          title="Anzeige aus meiner Übersicht ausblenden"
+                        >
+                          <EyeOff className="h-3 w-3" />
+                          Ausblenden
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setReportingListing(item)}
+                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-300"
+                          title="Anzeige wegen Mängeln oder Ablehnung von Jobcenter melden"
+                        >
+                          <Flag className="h-3 w-3" />
+                          Anzeige melden
+                        </button>
+                      </div>
                     </>
                   )}
                 </div>
@@ -1056,6 +1235,27 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
           cities={cities}
           onSuccess={handleAuthSuccess}
           onClose={() => setAuthModalOpen(false)}
+        />
+      )}
+
+      {reportingListing && (
+        <ReportListingModal
+          listing={reportingListing}
+          onClose={() => setReportingListing(null)}
+          onSubmitted={(listingId, alsoHidden) => {
+            if (alsoHidden) {
+              setData((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      total: Math.max(0, prev.total - 1),
+                      items: prev.items.filter((x) => x.id !== listingId),
+                    }
+                  : prev
+              );
+              fetchHiddenListings();
+            }
+          }}
         />
       )}
     </div>

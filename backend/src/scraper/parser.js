@@ -615,6 +615,124 @@ function extractCostsFromText(text) {
   return { coldRent, additionalCosts, heatingCosts, sqm, rooms };
 }
 
+const IGNORED_EMAIL_PATTERNS = [
+  /^no-?reply@/i,
+  /datenschutz@/i,
+  /impressum@/i,
+  /privacy@/i,
+  /support@kleinanzeigen/i,
+  /service@ohne-makler/i,
+  /info@immowelt/i,
+  /@sentry\./i,
+  /@example\./i,
+  /\.(png|jpe?g|webp|svg|gif)$/i,
+];
+
+function isValidContactEmail(email) {
+  const s = String(email || '').trim().toLowerCase();
+  if (!s || s.length > 160 || !/^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$/i.test(s)) {
+    return false;
+  }
+  return !IGNORED_EMAIL_PATTERNS.some((re) => re.test(s));
+}
+
+function normalizePhoneCandidate(raw) {
+  const cleaned = String(raw || '')
+    .replace(/^tel:/i, '')
+    .replace(/[\u00A0\s]+/g, ' ')
+    .trim();
+  const digits = cleaned.replace(/\D/g, '');
+  if (digits.length < 8 || digits.length > 16) return null;
+  if (/^(19|20)\d{6,}$/.test(digits)) return null;
+  return cleaned.slice(0, 75);
+}
+
+export function extractContactInfo($, { jsonLds = [], nextData = null, sellerName = '', text = '' } = {}) {
+  let contactPhone = null;
+  let contactEmail = null;
+
+  // 1. Explicit tel: & mailto: links in DOM
+  $('a[href^="tel:"]').each((_, el) => {
+    if (contactPhone) return;
+    const cand = normalizePhoneCandidate($(el).attr('href'));
+    if (cand) contactPhone = cand;
+  });
+
+  $('a[href^="mailto:"]').each((_, el) => {
+    if (contactEmail) return;
+    const raw = String($(el).attr('href') || '')
+      .replace(/^mailto:/i, '')
+      .split('?')[0]
+      .trim();
+    if (isValidContactEmail(raw)) contactEmail = raw.toLowerCase();
+  });
+
+  // 2. JSON-LD seller / organization contact
+  for (const ld of jsonLds) {
+    const offer = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers;
+    const phoneCand = normalizePhoneCandidate(offer?.seller?.telephone || ld.telephone);
+    if (!contactPhone && phoneCand) contactPhone = phoneCand;
+    const emailCand = offer?.seller?.email || ld.email;
+    if (!contactEmail && isValidContactEmail(emailCand)) {
+      contactEmail = String(emailCand).trim().toLowerCase();
+    }
+  }
+
+  // 3. __NEXT_DATA__ contact objects
+  if (nextData) {
+    const contactObjs = deepSearchObjects(
+      nextData,
+      (o) => Boolean(o.phone || o.phoneNumber || o.telephone || o.mobile || o.email || o.contactEmail)
+    );
+    for (const c of contactObjs) {
+      if (!contactPhone) {
+        const cand = normalizePhoneCandidate(c.phone || c.phoneNumber || c.telephone || c.mobile);
+        if (cand) contactPhone = cand;
+      }
+      if (!contactEmail) {
+        const em = c.contactEmail || c.email;
+        if (isValidContactEmail(em)) contactEmail = String(em).trim().toLowerCase();
+      }
+    }
+  }
+
+  // 4. Text regex extraction from description / contact blocks
+  const sourceText = String(text || '');
+  if (!contactEmail) {
+    const emailMatches = sourceText.match(/[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/gi) || [];
+    for (const m of emailMatches) {
+      if (isValidContactEmail(m)) {
+        contactEmail = m.toLowerCase();
+        break;
+      }
+    }
+  }
+
+  if (!contactPhone) {
+    const phoneRe = /(?:\+49|0049|0)\s*(?:\(?1[567]\d\)?|[2-9]\d{1,4})(?:[\s\-\/.\u00A0]*\d){5,11}/g;
+    const phoneMatches = sourceText.match(phoneRe) || [];
+    for (const pm of phoneMatches) {
+      const cand = normalizePhoneCandidate(pm);
+      if (cand) {
+        contactPhone = cand;
+        break;
+      }
+    }
+  }
+
+  const rawName = String(sellerName || '')
+    .replace(/\b(privater anbieter|gewerblicher anbieter|privatangebot)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 175);
+
+  return {
+    contact_name: rawName || null,
+    contact_phone: contactPhone,
+    contact_email: contactEmail,
+  };
+}
+
 /**
  * Parses a listing detail HTML page using DOM, valid JSON-LD, __NEXT_DATA__ & Regex fallback.
  * Never persists description text or image URLs.
@@ -872,6 +990,12 @@ export function parseListingDetail(html, url, portal = null, defaultCity = 'Gels
   });
 
   const wbsRequired = wbsExplicit !== null ? wbsExplicit : detectWbsRequired(fullText);
+  const contactInfo = extractContactInfo($, {
+    jsonLds,
+    nextData,
+    sellerName,
+    text: `${sellerName}\n${descriptionText}\n${$('footer').text().slice(0, 800)}`,
+  });
 
   return {
     external_id: externalId,
@@ -890,6 +1014,9 @@ export function parseListingDetail(html, url, portal = null, defaultCity = 'Gels
     is_private_landlord: Boolean(isPrivateLandlord),
     wbs_required: Boolean(wbsRequired),
     is_wanted: Boolean(isWanted),
+    contact_name: contactInfo.contact_name,
+    contact_phone: contactInfo.contact_phone,
+    contact_email: contactInfo.contact_email,
     description_snippet: descriptionText.slice(0, 800),
   };
 }

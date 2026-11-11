@@ -31,6 +31,10 @@ export interface ListingItem {
   last_seen_at: string;
   compliance_status: 'compliant' | 'produkttheorie' | 'tolerance';
   eigenanteil_eur: number;
+  contact_name?: string | null;
+  contact_phone?: string | null;
+  contact_email?: string | null;
+  has_direct_contact?: boolean;
 }
 
 export type PortalKey =
@@ -62,6 +66,15 @@ export interface UserProfile {
   address_schufa_directly: boolean;
   linked_portals: PortalLinkMap;
   status: 'active' | 'blocked';
+  account_type?: 'user' | 'organization';
+  org_status?: 'none' | 'active' | 'expired' | 'revoked';
+  org_name?: string;
+  org_subtitle?: string;
+  org_logo_url?: string;
+  org_contact?: string;
+  org_license_unlimited?: boolean;
+  org_license_expires_at?: string | null;
+  org_key_prefix?: string | null;
   last_login_at?: string | null;
   created_at?: string;
 }
@@ -96,6 +109,62 @@ export interface UserApplication {
   is_private_landlord: boolean;
   wbs_required: boolean;
   listing_status: string;
+  contact_name?: string | null;
+  contact_phone?: string | null;
+  contact_email?: string | null;
+}
+
+export type ReportReasonCode =
+  | 'no_jobcenter'
+  | 'wrong_description'
+  | 'already_rented'
+  | 'wrong_price'
+  | 'spam_fraud'
+  | 'other';
+
+export interface HiddenListingItem {
+  id: string;
+  listing_id: string;
+  created_at: string;
+  title: string;
+  url: string;
+  portal: string;
+  city: string;
+  district: string | null;
+  zipcode: string | null;
+  calculated_bruttokalt: number | null;
+  sqm: number | null;
+  rooms: number | null;
+  listing_status: string;
+}
+
+export interface HousingListResponse {
+  organization: {
+    name: string;
+    subtitle: string;
+    logo_url: string;
+    contact: string;
+    license_unlimited: boolean;
+    license_expires_at: string | null;
+  };
+  filters: {
+    city: string;
+    bg_size: number;
+    benefit_type: 'sgb2' | 'sgb12';
+    private_only: boolean;
+    include_tolerance: boolean;
+    district: string;
+    wbs: string;
+    require_direct_contact: boolean;
+    sort: string;
+    search: string;
+  };
+  rule: KduRule | null;
+  total: number;
+  total_all: number;
+  total_direct_contact: number;
+  districts: string[];
+  items: ListingItem[];
 }
 
 export interface ListingsResponse {
