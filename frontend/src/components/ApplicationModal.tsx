@@ -205,11 +205,14 @@ ${nameLine}${phoneLine}`;
       if (!res.ok) {
         throw new Error(json.error || `HTTP ${res.status}`);
       }
-      setTrackNotice(
-        status === 'saved'
-          ? 'In „Mein Bereich“ als vorgemerkt gespeichert.'
-          : 'In „Mein Bereich“ als kontaktiert gespeichert.'
-      );
+      const statusNames: Record<ApplicationStatus, string> = {
+        saved: 'Vorgemerkt',
+        contacted: 'Kontaktiert',
+        viewing: 'Besichtigung',
+        accepted: 'Zusage',
+        rejected: 'Absage',
+      };
+      setTrackNotice(`In „Mein Bereich“ als „${statusNames[status]}“ gespeichert.`);
       onTracked?.();
     } catch (err) {
       setTrackError(
@@ -218,20 +221,6 @@ ${nameLine}${phoneLine}`;
     } finally {
       setSavingStatus(null);
     }
-  };
-
-  const handleCopyAndOpen = async () => {
-    try {
-      await navigator.clipboard.writeText(generatedText);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
-    } catch {
-      // Clipboard fallback ignored
-    }
-    if (user) {
-      await trackApplication('contacted');
-    }
-    window.open(listing.url, '_blank', 'noopener,noreferrer');
   };
 
   return (
@@ -427,17 +416,39 @@ ${nameLine}${phoneLine}`;
           >
             Schließen
           </button>
-          <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {user && (
-              <button
-                type="button"
-                onClick={() => trackApplication('saved')}
-                disabled={savingStatus !== null}
-                className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm font-medium text-slate-200 transition hover:bg-slate-700 disabled:opacity-50"
-              >
-                <BookmarkPlus className="h-4 w-4" />
-                {savingStatus === 'saved' ? 'Speichere...' : 'Nur merken'}
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => trackApplication('saved')}
+                  disabled={savingStatus !== null}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-sky-500/40 bg-sky-500/10 px-3.5 py-2.5 text-xs font-semibold text-sky-200 transition hover:bg-sky-500/20 disabled:opacity-50"
+                >
+                  <BookmarkPlus className="h-4 w-4" />
+                  {savingStatus === 'saved' ? 'Speichere...' : 'Merken'}
+                </button>
+                <select
+                  aria-label="Bearbeitungsstand setzen"
+                  value={existingApplication?.application_status || ''}
+                  disabled={savingStatus !== null}
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      trackApplication(e.target.value as ApplicationStatus);
+                    }
+                  }}
+                  className="rounded-xl border border-slate-700 bg-slate-800 px-3 py-2.5 text-xs font-semibold text-slate-200 focus:border-emerald-500 focus:outline-none disabled:opacity-50"
+                >
+                  <option value="" disabled>
+                    Stand markieren...
+                  </option>
+                  <option value="saved">Vorgemerkt</option>
+                  <option value="contacted">Kontaktiert</option>
+                  <option value="viewing">Besichtigung</option>
+                  <option value="accepted">Zusage</option>
+                  <option value="rejected">Absage</option>
+                </select>
+              </>
             )}
             <button
               type="button"
@@ -456,17 +467,15 @@ ${nameLine}${phoneLine}`;
                 </>
               )}
             </button>
-            <button
-              type="button"
-              onClick={handleCopyAndOpen}
-              disabled={savingStatus !== null}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-50"
+            <a
+              href={listing.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-emerald-400"
             >
+              Zur Originalanzeige
               <ExternalLink className="h-4 w-4" />
-              {savingStatus === 'contacted'
-                ? 'Speichere...'
-                : 'Kopieren, als kontaktiert speichern & Inserat öffnen'}
-            </button>
+            </a>
           </div>
         </div>
       </div>

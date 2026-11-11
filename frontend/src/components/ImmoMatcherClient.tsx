@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle,
+  BookmarkPlus,
   Building2,
   CheckCircle2,
   ExternalLink,
@@ -19,11 +20,13 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
+  Trash2,
   User,
   UserCheck,
   Users,
 } from 'lucide-react';
 import type {
+  ApplicationStatus,
   KduRule,
   ListingItem,
   ListingsResponse,
@@ -33,6 +36,14 @@ import type {
 import { ApplicationModal } from './ApplicationModal';
 import { AuthModal } from './AuthModal';
 import { UserAreaView } from './UserAreaView';
+
+const APP_STATUS_OPTIONS: Array<{ value: ApplicationStatus; label: string }> = [
+  { value: 'saved', label: 'Vorgemerkt' },
+  { value: 'contacted', label: 'Kontaktiert' },
+  { value: 'viewing', label: 'Besichtigung' },
+  { value: 'accepted', label: 'Zusage' },
+  { value: 'rejected', label: 'Absage' },
+];
 
 function formatEur(val: number | null | undefined): string {
   if (val === null || val === undefined || Number.isNaN(val)) return '–';
@@ -158,23 +169,53 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
     setActiveView('search');
   };
 
-  const quickTrackContact = async (item: ListingItem) => {
+  const [updatingListingId, setUpdatingListingId] = useState<string | null>(null);
+
+  const setListingStatus = async (
+    item: ListingItem,
+    status: ApplicationStatus,
+    existing?: UserApplication
+  ) => {
     if (!user) return;
+    setUpdatingListingId(item.id);
     try {
-      await fetch('/api/me/applications', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      if (existing) {
+        await fetch(`/api/me/applications/${existing.id}`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ status }),
+        });
+      } else {
+        await fetch('/api/me/applications', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ listing_id: item.id, status }),
+        });
+      }
+      await fetchApplications();
+    } catch {
+      // ignore transient error
+    } finally {
+      setUpdatingListingId(null);
+    }
+  };
+
+  const removeListingStatus = async (item: ListingItem, existing: UserApplication) => {
+    if (!user) return;
+    setUpdatingListingId(item.id);
+    try {
+      await fetch(`/api/me/applications/${existing.id}`, {
+        method: 'DELETE',
         credentials: 'include',
-        body: JSON.stringify({
-          listing_id: item.id,
-          status: 'contacted',
-        }),
       });
       await fetchApplications();
     } catch {
-      // tracking best-effort
+      // ignore transient error
+    } finally {
+      setUpdatingListingId(null);
     }
-    window.open(item.url, '_blank', 'noopener,noreferrer');
   };
 
   const fetchListings = useCallback(async () => {
@@ -812,26 +853,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                 </div>
 
                 {/* Actions */}
-                <div className="mt-4 space-y-2">
-                  {user && applicationsByListingId.get(item.id) && (
-                    <div className="flex items-center justify-between rounded-lg border border-sky-500/30 bg-sky-500/10 px-2.5 py-1 text-[11px] font-semibold text-sky-200">
-                      <span>Status in „Mein Bereich“:</span>
-                      <span className="uppercase">
-                        {applicationsByListingId.get(item.id)?.application_status === 'contacted'
-                          ? 'Kontaktiert ✓'
-                          : applicationsByListingId.get(item.id)?.application_status === 'saved'
-                            ? 'Vorgemerkt'
-                            : applicationsByListingId.get(item.id)?.application_status ===
-                                'viewing'
-                              ? 'Besichtigung'
-                              : applicationsByListingId.get(item.id)?.application_status ===
-                                  'accepted'
-                                ? 'Zusage'
-                                : 'Absage'}
-                      </span>
-                    </div>
-                  )}
-
+                <div className="mt-4 space-y-2.5">
                   {!user ? (
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <button
@@ -849,33 +871,114 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                         type="button"
                         disabled
                         aria-disabled="true"
-                        title="Kontaktfunktion erfordert Login"
+                        title="Bitte zuerst anmelden, um zur Originalanzeige zu gelangen"
                         className="inline-flex cursor-not-allowed items-center justify-center gap-1.5 rounded-xl border border-slate-800 bg-slate-900/70 px-3.5 py-2.5 text-xs font-semibold text-slate-500 opacity-75"
                       >
                         <Lock className="h-3.5 w-3.5" />
-                        Kontakt gesperrt (Login)
+                        Originalanzeige (Login nötig)
                       </button>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedListing(item)}
-                        className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3.5 py-2.5 text-xs font-bold text-amber-300 transition hover:bg-amber-500/20"
-                      >
-                        <ShieldCheck className="h-4 w-4" />
-                        Kontakt &amp; Bewerbung
-                      </button>
+                    <>
+                      {(() => {
+                        const tracked = applicationsByListingId.get(item.id);
+                        const isBusy = updatingListingId === item.id;
+                        return (
+                          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800 bg-slate-950/70 px-2.5 py-2">
+                            {!tracked ? (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={() => setListingStatus(item, 'saved')}
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-xs font-semibold text-sky-200 transition hover:bg-sky-500/20 disabled:opacity-50"
+                                >
+                                  <BookmarkPlus className="h-3.5 w-3.5" />
+                                  {isBusy ? 'Speichere...' : 'Wohnung merken'}
+                                </button>
+                                <select
+                                  aria-label="Bearbeitungsstand setzen"
+                                  value=""
+                                  disabled={isBusy}
+                                  onChange={(e) => {
+                                    if (e.target.value) {
+                                      setListingStatus(item, e.target.value as ApplicationStatus);
+                                    }
+                                  }}
+                                  className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 focus:border-emerald-500 focus:outline-none disabled:opacity-50"
+                                >
+                                  <option value="" disabled>
+                                    Stand markieren...
+                                  </option>
+                                  {APP_STATUS_OPTIONS.map((opt) => (
+                                    <option key={opt.value} value={opt.value}>
+                                      {opt.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </>
+                            ) : (
+                              <>
+                                <span className="text-[11px] font-semibold text-sky-300">
+                                  Mein Stand:
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <select
+                                    aria-label="Bearbeitungsstand ändern"
+                                    value={tracked.application_status}
+                                    disabled={isBusy}
+                                    onChange={(e) =>
+                                      setListingStatus(
+                                        item,
+                                        e.target.value as ApplicationStatus,
+                                        tracked
+                                      )
+                                    }
+                                    className="rounded-lg border border-sky-500/40 bg-slate-900 px-2 py-1 text-xs font-semibold text-sky-200 focus:border-emerald-500 focus:outline-none disabled:opacity-50"
+                                  >
+                                    {APP_STATUS_OPTIONS.map((opt) => (
+                                      <option key={opt.value} value={opt.value}>
+                                        {opt.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <button
+                                    type="button"
+                                    disabled={isBusy}
+                                    onClick={() => removeListingStatus(item, tracked)}
+                                    title="Aus Merkliste / Status entfernen"
+                                    className="rounded-lg border border-slate-800 bg-slate-900 p-1.5 text-slate-400 transition hover:border-rose-500/40 hover:text-rose-300 disabled:opacity-50"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })()}
 
-                      <button
-                        type="button"
-                        onClick={() => quickTrackContact(item)}
-                        className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-2.5 text-xs font-bold text-slate-950 transition hover:bg-emerald-400"
-                      >
-                        Original-Inserat &amp; Kontakt
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedListing(item)}
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3.5 py-2.5 text-xs font-bold text-amber-300 transition hover:bg-amber-500/20"
+                        >
+                          <ShieldCheck className="h-4 w-4" />
+                          Bewerbung &amp; Anschreiben
+                        </button>
+
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-2.5 text-xs font-bold text-slate-950 transition hover:bg-emerald-400"
+                        >
+                          Zur Originalanzeige
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </a>
+                      </div>
+                    </>
                   )}
                 </div>
               </article>
