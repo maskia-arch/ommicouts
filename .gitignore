@@ -1,0 +1,35 @@
+# ==============================================================================
+# Git Security: Private Admin Stack & Secrets MUST NEVER be pushed to GitHub!
+# ==============================================================================
+/admin-local/
+/admin-local/**
+admin-local/
+**/Start-Admin.bat
+**/start-admin.sh
+Start-Admin.bat
+start-admin.sh
+
+# Environment files (only .env.example is tracked)
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Dependencies & Build Outputs
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+dist/
+**/dist/
+build/
+**/build/
+out/
+
+# Logs & OS Files
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
