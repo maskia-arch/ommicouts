@@ -1,10 +1,56 @@
 import cron from 'node-cron';
 import { config } from '../config.js';
 import { pool } from '../db.js';
-import { runDeltaPoll, runReconciler } from './engine.js';
+import { getEngineStatus, runDeltaPoll, runReconciler } from './engine.js';
 import { syncKduSourceForCity } from '../services/kduUpdater.js';
 
 const scheduledTasks = [];
+const deltaQueue = [];
+const queuedConfigIds = new Set();
+let drainingQueue = false;
+
+async function drainDeltaQueue() {
+  if (drainingQueue) return;
+  drainingQueue = true;
+
+  try {
+    while (deltaQueue.length > 0) {
+      while (getEngineStatus().deltaPollRunning) {
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+
+      const nextJob = deltaQueue.shift();
+      if (!nextJob) continue;
+      queuedConfigIds.delete(nextJob.configId);
+
+      try {
+        await runDeltaPoll({ configId: nextJob.configId });
+      } catch (err) {
+        console.error(`[Scheduler] Fehler bei Config #${nextJob.configId}:`, err.message);
+      }
+
+      if (deltaQueue.length > 0) {
+        const pauseMs = 1500 + Math.floor(Math.random() * 2500);
+        await new Promise((r) => setTimeout(r, pauseMs));
+      }
+    }
+  } finally {
+    drainingQueue = false;
+    if (deltaQueue.length > 0) {
+      void drainDeltaQueue();
+    }
+  }
+}
+
+export function enqueueScheduledDeltaPoll(configId) {
+  if (!configId || queuedConfigIds.has(configId)) {
+    return false;
+  }
+  queuedConfigIds.add(configId);
+  deltaQueue.push({ configId });
+  void drainDeltaQueue();
+  return true;
+}
 
 export function stopAllSchedules() {
   while (scheduledTasks.length > 0) {
@@ -15,6 +61,8 @@ export function stopAllSchedules() {
       // ignore
     }
   }
+  deltaQueue.length = 0;
+  queuedConfigIds.clear();
 }
 
 export async function reloadSchedules() {
@@ -37,15 +85,8 @@ export async function reloadSchedules() {
       continue;
     }
 
-    const task = cron.schedule(cfg.cron_expression, async () => {
-      // Small random startup stagger (1-15s) to avoid exact-second bursts
-      const staggerMs = 1000 + Math.floor(Math.random() * 14000);
-      await new Promise((r) => setTimeout(r, staggerMs));
-      try {
-        await runDeltaPoll({ configId: cfg.id });
-      } catch (err) {
-        console.error(`[Scheduler] Fehler bei Config #${cfg.id}:`, err.message);
-      }
+    const task = cron.schedule(cfg.cron_expression, () => {
+      enqueueScheduledDeltaPoll(cfg.id);
     });
 
     scheduledTasks.push(task);
