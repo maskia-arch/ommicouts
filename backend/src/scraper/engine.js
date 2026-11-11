@@ -6,6 +6,10 @@ import {
 } from '../services/kduMatcher.js';
 import { fetchStealthHtml, sleepJitter } from './httpClient.js';
 import {
+  findCrossPortalDuplicate,
+  mergeUserReferencesAndMarkOffline,
+} from '../services/deduplicator.js';
+import {
   buildPagedSearchUrl,
   detectPortal,
   extractSearchListingLinks,
@@ -94,6 +98,50 @@ async function upsertParsedListing(parsed, rules) {
   const calculatedBruttokalt = computeBruttokalt(parsed.cold_rent, parsed.additional_costs);
   const matchedMinBgSize = findMatchedMinBgSize(calculatedBruttokalt, rules);
 
+  const dup = await findCrossPortalDuplicate(parsed);
+  if (dup.duplicate && !dup.incomingWon) {
+    // Existing listing on another portal wins -> enrich winner and store duplicate as offline so delta-poll skips it
+    await mergeUserReferencesAndMarkOffline(dup.existing, { ...parsed, id: null }, rules);
+    await pool.query(
+      `INSERT INTO listings (
+         external_id, portal, title, url, city, district, zipcode,
+         cold_rent, additional_costs, heating_costs, calculated_bruttokalt,
+         sqm, rooms, is_private_landlord, wbs_required, matched_min_bg_size,
+         contact_name, contact_phone, contact_email,
+         status, first_seen_at, last_seen_at
+       )
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'offline',NOW(),NOW())
+       ON CONFLICT (external_id) DO UPDATE SET
+         status = CASE WHEN listings.status = 'manual_hidden' THEN 'manual_hidden' ELSE 'offline' END,
+         last_seen_at = NOW()`,
+      [
+        parsed.external_id,
+        parsed.portal,
+        parsed.title,
+        parsed.url,
+        parsed.city,
+        parsed.district,
+        parsed.zipcode,
+        parsed.cold_rent,
+        parsed.additional_costs,
+        parsed.heating_costs,
+        calculatedBruttokalt,
+        parsed.sqm,
+        parsed.rooms,
+        parsed.is_private_landlord,
+        parsed.wbs_required,
+        matchedMinBgSize,
+        parsed.contact_name || null,
+        parsed.contact_phone || null,
+        parsed.contact_email || null,
+      ]
+    );
+    console.log(
+      `[Deduplicator] Cross-Portal-Duplikat ${parsed.external_id} übersprungen (Primär-Inserat: ${dup.existing.external_id}).`
+    );
+    return null;
+  }
+
   const { rows } = await pool.query(
     `INSERT INTO listings (
        external_id, portal, title, url, city, district, zipcode,
@@ -147,7 +195,15 @@ async function upsertParsedListing(parsed, rules) {
     ]
   );
 
-  return rows[0];
+  const savedWinner = rows[0];
+  if (dup.duplicate && dup.incomingWon && dup.existing) {
+    await mergeUserReferencesAndMarkOffline(savedWinner, dup.existing, rules);
+    console.log(
+      `[Deduplicator] Primär-Inserat ${savedWinner.external_id} hat Duplikat ${dup.existing.external_id} ersetzt.`
+    );
+  }
+
+  return savedWinner;
 }
 
 export async function crawlSingleUrl(
@@ -203,6 +259,15 @@ export async function crawlSingleUrl(
 
     const rules = await getRulesForCity(city);
     const saved = await upsertParsedListing(parsed, rules);
+    if (!saved) {
+      const msg = 'Skipped: Cross-Portal-Duplikat (bereits über anderes Portal erfasst)';
+      await finishLog(log.id, log.started_at, {
+        status: 'success',
+        errorMessage: msg,
+        details: { external_id: parsed.external_id, url: parsed.url },
+      });
+      return { ok: false, reason: msg };
+    }
 
     await finishLog(log.id, log.started_at, {
       status: 'success',

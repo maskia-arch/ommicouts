@@ -411,9 +411,13 @@ export async function cleanupInvalidListings() {
        OR url ~* '(gesucht|wohnungssuche|suche-wohnung|wg-zimmer|stellplatz|garage|demenz-wg|pflege-wg|senioren-wg)'
   `);
 
-  const countRes = await pool.query(`SELECT COUNT(*)::int AS remaining FROM listings`);
+  const { deduplicateActiveListings } = await import('./services/deduplicator.js');
+  const dedup = await deduplicateActiveListings();
+
+  const countRes = await pool.query(`SELECT COUNT(*)::int AS remaining FROM listings WHERE status = 'active'`);
   return {
     deletedCount: rowCount || 0,
+    deduplicatedCount: dedup.deduplicatedCount || 0,
     remainingCount: countRes.rows[0]?.remaining || 0,
   };
 }
@@ -435,7 +439,7 @@ export async function ensureDatabaseInitialized(retries = 10, delayMs = 2000) {
 
       const cleanup = await cleanupInvalidListings();
       console.log(
-        `[DB] PostgreSQL verbunden, Schema/Configs aktuell. Cleanup: ${cleanup.deletedCount} fehlerhafte Listings entfernt (${cleanup.remainingCount} verbleibend).`
+        `[DB] PostgreSQL verbunden, Schema/Configs aktuell. Cleanup: ${cleanup.deletedCount} fehlerhafte + ${cleanup.deduplicatedCount} Duplikate bereinigt (${cleanup.remainingCount} aktive verbleibend).`
       );
       return;
     } catch (err) {

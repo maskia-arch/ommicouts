@@ -10,6 +10,10 @@ import {
 } from '../src/services/userAuth.js';
 import { buildHousingListPdfBuffer } from '../src/services/pdfExport.js';
 import { buildUpdatedScraperUrlAndName } from '../src/services/kduUpdater.js';
+import {
+  isCrossPortalDuplicatePair,
+  pickDuplicateWinner,
+} from '../src/services/deduplicator.js';
 
 test('extractContactInfo extracts phone, email, name and filters portal system emails', () => {
   const html = `
@@ -173,4 +177,87 @@ test('buildUpdatedScraperUrlAndName adapts cap across Kleinanzeigen, Immowelt an
   );
   assert.ok(iw.nextUrl.includes('priceMax=950'));
   assert.ok(iw.nextName.includes('bis 950 EUR'));
+});
+
+test('cross-portal deduplicator detects Ohne-Makler/GGW vs Kleinanzeigen duplicates and keeps primary source', () => {
+  const om = {
+    id: 'id-om',
+    portal: 'other',
+    external_id: 'om_510668',
+    city: 'Gelsenkirchen',
+    zipcode: '45884',
+    title: 'Ihr neues Zuhause: Stilvoll, hell und perfekt geschnitten! - 1-Zi.Wohnung in Gelsenkirchen',
+    cold_rent: 350,
+    additional_costs: 70,
+    sqm: 40,
+    rooms: 1,
+    contact_name: null,
+  };
+  const kaSyndicated = {
+    id: 'id-ka',
+    portal: 'kleinanzeigen',
+    external_id: 'ka_3556187433',
+    city: 'Gelsenkirchen',
+    zipcode: '45884',
+    title: 'hr neues Zuhause: Stilvoll, hell und perfekt geschnitten! - 1-Zi.Wohnung in Gelsenkirchen',
+    cold_rent: 350,
+    additional_costs: 70,
+    sqm: 40,
+    rooms: 1,
+    contact_name: 'OM Ohne Makler - Privat vom Eigentümer Gewerblicher Nutzer',
+  };
+
+  assert.equal(isCrossPortalDuplicatePair(om, kaSyndicated), true);
+  const { winner, loser } = pickDuplicateWinner(kaSyndicated, om);
+  assert.equal(winner.external_id, 'om_510668');
+  assert.equal(loser.external_id, 'ka_3556187433');
+
+  // Kleinanzeigen beats sparse Immowelt copy when direct portal is not involved
+  const kaRich = {
+    portal: 'kleinanzeigen',
+    external_id: 'ka_3553674915',
+    city: 'Gelsenkirchen',
+    zipcode: '45886',
+    title: 'Geräumige 1-Zimmer-Wohnung mit EBK in Gelsenkirchen',
+    cold_rent: 499,
+    additional_costs: 80,
+    sqm: 45.95,
+    rooms: 1,
+  };
+  const iwAuto = {
+    portal: 'immowelt',
+    external_id: 'iw_012871b2',
+    city: 'Gelsenkirchen',
+    zipcode: '45886',
+    title: 'Wohnung zur Miete - Gelsenkirchen - 499 € - 1 Zimmer, 46 m²',
+    cold_rent: 499,
+    additional_costs: 0,
+    sqm: 46,
+    rooms: 1,
+  };
+  assert.equal(isCrossPortalDuplicatePair(kaRich, iwAuto), true);
+  assert.equal(pickDuplicateWinner(iwAuto, kaRich).winner.external_id, 'ka_3553674915');
+
+  // Distinct apartments with same template title must NOT be merged
+  const vonoviaA = {
+    portal: 'kleinanzeigen',
+    external_id: 'ka_3534281960',
+    city: 'Gelsenkirchen',
+    zipcode: '45883',
+    title: 'Bezugsfertige Wohnung - Einfach Möbel rein!',
+    cold_rent: 392,
+    sqm: 69.92,
+    rooms: 3.5,
+  };
+  const vonoviaB = {
+    portal: 'kleinanzeigen',
+    external_id: 'ka_3522372334',
+    city: 'Gelsenkirchen',
+    zipcode: '45883',
+    title: 'Bezugsfertige Wohnung - Einfach Möbel rein!',
+    cold_rent: 462,
+    sqm: 82.34,
+    rooms: 4.5,
+  };
+  assert.equal(isCrossPortalDuplicatePair(vonoviaA, vonoviaB), false);
 });
