@@ -9,6 +9,7 @@ import {
   computeOrgLicenseState,
 } from '../src/services/userAuth.js';
 import { buildHousingListPdfBuffer } from '../src/services/pdfExport.js';
+import { buildUpdatedScraperUrlAndName } from '../src/services/kduUpdater.js';
 
 test('extractContactInfo extracts phone, email, name and filters portal system emails', () => {
   const html = `
@@ -148,4 +149,28 @@ test('buildHousingListPdfBuffer generates a valid landscape A4 PDF document', as
   assert.ok(Buffer.isBuffer(buf));
   assert.ok(buf.length > 1000);
   assert.equal(buf.subarray(0, 7).toString('utf8'), '%PDF-1.');
+});
+
+test('buildUpdatedScraperUrlAndName adapts cap across Kleinanzeigen, Immowelt and GGW', () => {
+  const ka = buildUpdatedScraperUrlAndName(
+    {
+      portal: 'kleinanzeigen',
+      name: 'Kleinanzeigen Gelsenkirchen (Angebote, 150-850 EUR)',
+      search_url: 'https://www.kleinanzeigen.de/s-wohnung-mieten/gelsenkirchen/preis:150:850/c203',
+    },
+    950
+  );
+  assert.ok(ka.nextUrl.includes('/preis:150:950/'));
+  assert.ok(ka.nextName.includes('150-950 EUR'));
+
+  const iw = buildUpdatedScraperUrlAndName(
+    {
+      portal: 'immowelt',
+      name: 'Immowelt Gelsenkirchen (Angebote bis 850 EUR)',
+      search_url: 'https://www.immowelt.de/suche/mieten/wohnung/gelsenkirchen?priceMax=850',
+    },
+    950
+  );
+  assert.ok(iw.nextUrl.includes('priceMax=950'));
+  assert.ok(iw.nextName.includes('bis 950 EUR'));
 });

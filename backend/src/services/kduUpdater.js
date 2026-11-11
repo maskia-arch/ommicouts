@@ -295,53 +295,89 @@ export function deriveSearchMaxRentFromRules(rules) {
   return Math.max(500, Math.ceil(rawMax / 50) * 50);
 }
 
+export function buildUpdatedScraperUrlAndName(cfg, cap) {
+  let nextUrl = cfg.search_url;
+  if (cfg.portal === 'kleinanzeigen') {
+    nextUrl = nextUrl.replace(/\/preis:\d*:\d+\//i, `/preis:150:${cap}/`);
+  } else if (cfg.portal === 'immowelt') {
+    try {
+      const u = new URL(nextUrl);
+      u.searchParams.set('priceMax', String(cap));
+      nextUrl = u.toString();
+    } catch {
+      // ignore invalid URL
+    }
+  } else if (cfg.portal === 'immoscout') {
+    try {
+      const u = new URL(nextUrl);
+      u.searchParams.set('price', `-${cap}.0`);
+      nextUrl = u.toString();
+    } catch {
+      // ignore invalid URL
+    }
+  } else if (nextUrl.includes('ggw-gelsenkirchen.de')) {
+    try {
+      const u = new URL(nextUrl);
+      u.searchParams.set('price', String(cap));
+      nextUrl = u.toString();
+    } catch {
+      // ignore invalid URL
+    }
+  }
+
+  const nextName = String(cfg.name || '')
+    .replace(/150-\d+\s*EUR/i, `150-${cap} EUR`)
+    .replace(/bis\s+\d+\s*EUR/i, `bis ${cap} EUR`);
+  return { nextUrl, nextName };
+}
+
 export async function updateCityScraperPriceCaps(city, maxRentEur) {
   const cap = Math.round(Number(maxRentEur));
   if (!Number.isFinite(cap) || cap < 300) return 0;
 
   const { rows: configs } = await pool.query(
-    `SELECT id, portal, search_url, name FROM scraper_configs WHERE LOWER(city) = LOWER($1)`,
+    `SELECT id, portal, search_url, name, is_active FROM scraper_configs WHERE LOWER(city) = LOWER($1) ORDER BY id ASC`,
     [city]
   );
 
   let updated = 0;
+  let merged = 0;
   for (const cfg of configs) {
-    let nextUrl = cfg.search_url;
-    if (cfg.portal === 'kleinanzeigen') {
-      nextUrl = nextUrl.replace(/\/preis:\d*:\d+\//i, `/preis:150:${cap}/`);
-    } else if (cfg.portal === 'immowelt') {
-      try {
-        const u = new URL(nextUrl);
-        u.searchParams.set('priceMax', String(cap));
-        nextUrl = u.toString();
-      } catch {
-        // ignore invalid URL
+    const { nextUrl, nextName } = buildUpdatedScraperUrlAndName(cfg, cap);
+    if (nextUrl === cfg.search_url && nextName === cfg.name) continue;
+
+    // Check if updating search_url would collide with another config having the same (portal, search_url)
+    const { rows: collision } = await pool.query(
+      `SELECT id, is_active FROM scraper_configs WHERE portal = $1 AND search_url = $2 AND id <> $3 LIMIT 1`,
+      [cfg.portal, nextUrl, cfg.id]
+    );
+
+    if (collision.length > 0) {
+      const survivor = collision[0];
+      if (cfg.is_active && !survivor.is_active) {
+        await pool.query(`UPDATE scraper_configs SET is_active = TRUE, updated_at = NOW() WHERE id = $1`, [
+          survivor.id,
+        ]);
       }
-    } else if (cfg.portal === 'immoscout') {
-      try {
-        const u = new URL(nextUrl);
-        u.searchParams.set('price', `-${cap}.0`);
-        nextUrl = u.toString();
-      } catch {
-        // ignore invalid URL
-      }
-    } else if (nextUrl.includes('ggw-gelsenkirchen.de')) {
-      try {
-        const u = new URL(nextUrl);
-        u.searchParams.set('price', String(cap));
-        nextUrl = u.toString();
-      } catch {
-        // ignore invalid URL
-      }
+      await pool.query(`DELETE FROM scraper_configs WHERE id = $1`, [cfg.id]);
+      merged++;
+      updated++;
+      continue;
     }
 
-    const nextName = cfg.name.replace(/150-\d+\s*EUR/i, `150-${cap} EUR`).replace(/bis\s+\d+\s*EUR/i, `bis ${cap} EUR`);
-    if (nextUrl !== cfg.search_url || nextName !== cfg.name) {
-      await pool.query(
-        `UPDATE scraper_configs SET search_url = $1, name = $2, updated_at = NOW() WHERE id = $3`,
-        [nextUrl, nextName, cfg.id]
-      );
-      updated++;
+    await pool.query(
+      `UPDATE scraper_configs SET search_url = $1, name = $2, updated_at = NOW() WHERE id = $3`,
+      [nextUrl, nextName, cfg.id]
+    );
+    updated++;
+  }
+
+  if (merged > 0) {
+    try {
+      const { reloadSchedules } = await import('../scraper/scheduler.js');
+      await reloadSchedules();
+    } catch {
+      // non-fatal during isolated scripts/tests
     }
   }
   return updated;
@@ -401,28 +437,42 @@ export async function syncKduSourceForCity(city) {
   }
 
   const derivedMaxRent = deriveSearchMaxRentFromRules(preview.rules);
-  await pool.query(
-    `UPDATE kdu_sources
-     SET search_max_rent_eur = $1,
-         last_synced_at = NOW(),
-         last_sync_status = 'success',
-         last_sync_message = $2,
-         updated_at = NOW()
-     WHERE id = $3`,
-    [derivedMaxRent, `${preview.rules.length} Stufen via ${preview.format.toUpperCase()} aktualisiert.`, src.id]
-  );
+  try {
+    const scrapersUpdated = await updateCityScraperPriceCaps(src.city, derivedMaxRent);
+    const recalc = await recalculateAllListings(src.city);
 
-  const scrapersUpdated = await updateCityScraperPriceCaps(src.city, derivedMaxRent);
-  const recalc = await recalculateAllListings(src.city);
+    await pool.query(
+      `UPDATE kdu_sources
+       SET search_max_rent_eur = $1,
+           last_synced_at = NOW(),
+           last_sync_status = 'success',
+           last_sync_message = $2,
+           updated_at = NOW()
+       WHERE id = $3`,
+      [
+        derivedMaxRent,
+        `${preview.rules.length} Stufen via ${preview.format.toUpperCase()} aktualisiert.`,
+        src.id,
+      ]
+    );
 
-  return {
-    ok: true,
-    city: src.city,
-    rulesUpdated: preview.rules.length,
-    derivedMaxRent,
-    scrapersUpdated,
-    listingsRecalculated: recalc.totalProcessed,
-  };
+    return {
+      ok: true,
+      city: src.city,
+      rulesUpdated: preview.rules.length,
+      derivedMaxRent,
+      scrapersUpdated,
+      listingsRecalculated: recalc.totalProcessed,
+    };
+  } catch (err) {
+    await pool.query(
+      `UPDATE kdu_sources
+       SET last_synced_at = NOW(), last_sync_status = 'error', last_sync_message = $1, updated_at = NOW()
+       WHERE id = $2`,
+      [String(err.message || 'Unbekannter Fehler beim Anwenden der KdU-Daten'), src.id]
+    );
+    throw err;
+  }
 }
 
 export async function syncAllAutoKduSources() {

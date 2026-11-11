@@ -162,7 +162,9 @@ WHERE portal = 'immowelt'
   AND search_url LIKE '%/liste/gelsenkirchen/%';
 
 INSERT INTO scraper_configs (portal, city, name, search_url, cron_expression, jitter_min_ms, jitter_max_ms, is_active)
-VALUES
+SELECT v.portal, v.city, v.name, v.search_url, v.cron_expression, v.jitter_min_ms, v.jitter_max_ms, v.is_active
+FROM (
+  VALUES
     (
         'kleinanzeigen',
         'Gelsenkirchen',
@@ -171,7 +173,8 @@ VALUES
         '*/20 * * * *',
         4000,
         15000,
-        TRUE
+        TRUE,
+        'ka_all'
     ),
     (
         'kleinanzeigen',
@@ -181,7 +184,8 @@ VALUES
         '*/20 * * * *',
         4000,
         15000,
-        TRUE
+        TRUE,
+        'ka_priv'
     ),
     (
         'kleinanzeigen',
@@ -191,7 +195,8 @@ VALUES
         '*/30 * * * *',
         4000,
         15000,
-        TRUE
+        TRUE,
+        'ka_wbs'
     ),
     (
         'immowelt',
@@ -201,7 +206,8 @@ VALUES
         '*/20 * * * *',
         4000,
         15000,
-        TRUE
+        TRUE,
+        'iw_all'
     ),
     (
         'other',
@@ -211,7 +217,8 @@ VALUES
         '*/30 * * * *',
         4000,
         15000,
-        TRUE
+        TRUE,
+        'ohne_makler'
     ),
     (
         'other',
@@ -221,7 +228,8 @@ VALUES
         '0 */2 * * *',
         4000,
         15000,
-        TRUE
+        TRUE,
+        'ggw'
     ),
     (
         'immoscout',
@@ -231,8 +239,24 @@ VALUES
         '*/30 * * * *',
         5000,
         15000,
-        FALSE
+        FALSE,
+        'immoscout'
     )
+) AS v(portal, city, name, search_url, cron_expression, jitter_min_ms, jitter_max_ms, is_active, seed_kind)
+WHERE NOT EXISTS (
+  SELECT 1 FROM scraper_configs sc
+  WHERE LOWER(sc.city) = LOWER(v.city)
+    AND sc.portal = v.portal
+    AND (
+      (v.seed_kind = 'ka_all' AND sc.search_url NOT LIKE '%anbieter:privat%' AND sc.search_url NOT LIKE '%/wbs/%') OR
+      (v.seed_kind = 'ka_priv' AND sc.search_url LIKE '%anbieter:privat%') OR
+      (v.seed_kind = 'ka_wbs' AND sc.search_url LIKE '%/wbs/%') OR
+      (v.seed_kind = 'iw_all') OR
+      (v.seed_kind = 'ohne_makler' AND sc.search_url LIKE '%ohne-makler.net%') OR
+      (v.seed_kind = 'ggw' AND sc.search_url LIKE '%ggw-gelsenkirchen.de%') OR
+      (v.seed_kind = 'immoscout')
+    )
+)
 ON CONFLICT (portal, search_url) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS scraper_logs (
