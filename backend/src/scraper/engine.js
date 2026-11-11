@@ -12,6 +12,7 @@ import {
   isListingOfflineHtml,
   parseListingDetail,
 } from './parser.js';
+import { validateListing } from './validator.js';
 
 const runtimeLocks = {
   deltaPollRunning: false,
@@ -127,7 +128,7 @@ export async function crawlSingleUrl(
   });
 
   try {
-    const res = await fetchStealthHtml(url, { proxyUrl });
+    const res = await fetchStealthHtml(url, { proxyUrl, preferDesktop: true });
     const offlineCheck = isListingOfflineHtml(res.html, res.finalUrl, res.statusCode, portal);
 
     if (offlineCheck.offline) {
@@ -143,6 +144,19 @@ export async function crawlSingleUrl(
     }
 
     const parsed = parseListingDetail(res.html, res.finalUrl || url, portal, city);
+    const validation = validateListing(parsed, city);
+
+    if (!validation.valid) {
+      const msg = `Skipped: Validation failed [${validation.reason}]`;
+      console.log(`[Validator] ${msg} (${parsed.external_id})`);
+      await finishLog(log.id, log.started_at, {
+        status: 'error',
+        errorMessage: msg,
+        details: { external_id: parsed.external_id, url: parsed.url, reason: validation.reason },
+      });
+      return { ok: false, reason: msg };
+    }
+
     const rules = await getRulesForCity(city);
     const saved = await upsertParsedListing(parsed, rules);
 
@@ -181,20 +195,23 @@ export async function runDeltaPoll({ configId = null } = {}) {
       : await pool.query(`SELECT * FROM scraper_configs WHERE is_active = TRUE ORDER BY id ASC`);
 
     for (const cfg of configs) {
+      const targetCity = cfg.city || 'Gelsenkirchen';
       const log = await createLog({
         configId: cfg.id,
         runType: 'delta_poll',
         portal: cfg.portal,
-        details: { configName: cfg.name, city: cfg.city },
+        details: { configName: cfg.name, city: targetCity },
       });
 
       let newCount = 0;
       let updatedCount = 0;
+      let skippedCount = 0;
       let stoppedEarly = false;
       const errors = [];
+      const skippedSamples = [];
 
       try {
-        const rules = await getRulesForCity(cfg.city || 'Gelsenkirchen');
+        const rules = await getRulesForCity(targetCity);
         let consecutiveKnown = 0;
 
         for (const page of [1, 2]) {
@@ -203,6 +220,7 @@ export async function runDeltaPoll({ configId = null } = {}) {
           const pagedUrl = buildPagedSearchUrl(cfg.search_url, page, cfg.portal);
           const searchRes = await fetchStealthHtml(pagedUrl, {
             proxyUrl: cfg.proxy_url,
+            preferDesktop: true,
           });
 
           if (searchRes.statusCode >= 400) {
@@ -210,9 +228,16 @@ export async function runDeltaPoll({ configId = null } = {}) {
             break;
           }
 
-          const candidates = extractSearchListingLinks(searchRes.html, pagedUrl, cfg.portal);
+          const candidates = extractSearchListingLinks(
+            searchRes.html,
+            pagedUrl,
+            cfg.portal,
+            targetCity
+          );
           if (candidates.length === 0) {
-            errors.push(`Seite ${page}: Keine Inserat-Links extrahiert (evtl. Bot-Schutz/Layoutänderung).`);
+            if (page === 1) {
+              errors.push(`Seite ${page}: Keine Inserat-Links extrahiert.`);
+            }
             break;
           }
 
@@ -239,14 +264,18 @@ export async function runDeltaPoll({ configId = null } = {}) {
               continue;
             }
 
-            // Unknown listing -> reset consecutive counter and fetch detail page with jitter
             consecutiveKnown = 0;
+            let parsed = null;
+
+            // If SERP card already parsed everything (e.g. Immowelt), try detail page for NK/exact text,
+            // and fall back cleanly to SERP card if detail page is blocked (403/429).
             await sleepJitter(cfg.jitter_min_ms, cfg.jitter_max_ms);
 
             try {
               const detailRes = await fetchStealthHtml(candidate.url, {
                 proxyUrl: cfg.proxy_url,
                 referer: pagedUrl,
+                preferDesktop: true,
               });
 
               const offlineCheck = isListingOfflineHtml(
@@ -255,25 +284,53 @@ export async function runDeltaPoll({ configId = null } = {}) {
                 detailRes.statusCode,
                 cfg.portal
               );
-              if (offlineCheck.offline || detailRes.statusCode >= 400) {
+              if (offlineCheck.offline) {
                 continue;
               }
 
-              const parsed = parseListingDetail(
-                detailRes.html,
-                detailRes.finalUrl || candidate.url,
-                cfg.portal,
-                cfg.city || 'Gelsenkirchen'
-              );
-              if (!parsed.title && candidate.quickTitle) {
-                parsed.title = candidate.quickTitle;
+              if (detailRes.statusCode >= 400) {
+                if (candidate.serpParsed) {
+                  parsed = candidate.serpParsed;
+                } else {
+                  errors.push(`${candidate.externalId}: HTTP ${detailRes.statusCode}`);
+                  continue;
+                }
+              } else {
+                parsed = parseListingDetail(
+                  detailRes.html,
+                  detailRes.finalUrl || candidate.url,
+                  cfg.portal,
+                  targetCity
+                );
+                if (!parsed.title && candidate.quickTitle) {
+                  parsed.title = candidate.quickTitle;
+                }
               }
-
-              await upsertParsedListing(parsed, rules);
-              newCount++;
             } catch (detailErr) {
-              errors.push(`${candidate.externalId}: ${detailErr.message}`);
+              if (candidate.serpParsed) {
+                parsed = candidate.serpParsed;
+              } else {
+                errors.push(`${candidate.externalId}: ${detailErr.message}`);
+                continue;
+              }
             }
+
+            if (!parsed) continue;
+
+            // Strict Validation Firewall before PostgreSQL insert
+            const validation = validateListing(parsed, targetCity);
+            if (!validation.valid) {
+              skippedCount++;
+              const skipMsg = `Skipped: Validation failed [${validation.reason}]`;
+              console.log(`[Validator] ${skipMsg} (${parsed.external_id})`);
+              if (skippedSamples.length < 15) {
+                skippedSamples.push(`${parsed.external_id}: ${validation.reason}`);
+              }
+              continue;
+            }
+
+            await upsertParsedListing(parsed, rules);
+            newCount++;
           }
 
           if (!stoppedEarly && page === 1) {
@@ -282,23 +339,45 @@ export async function runDeltaPoll({ configId = null } = {}) {
         }
 
         const status =
-          errors.length === 0 ? 'success' : newCount > 0 || updatedCount > 0 ? 'partial' : 'error';
+          errors.length === 0
+            ? 'success'
+            : newCount > 0 || updatedCount > 0 || skippedCount > 0
+              ? 'partial'
+              : 'error';
+
+        const infoNotes = [];
+        if (skippedCount > 0) infoNotes.push(`${skippedCount} verworfen (Validierung)`);
+        if (errors.length > 0) infoNotes.push(errors.slice(0, 4).join(' | '));
 
         await finishLog(log.id, log.started_at, {
           status,
           newCount,
           updatedCount,
-          errorMessage: errors.length > 0 ? errors.slice(0, 5).join(' | ') : null,
-          details: { stoppedEarly, configName: cfg.name },
+          errorMessage: infoNotes.length > 0 ? infoNotes.join(' · ') : null,
+          details: {
+            stoppedEarly,
+            skippedCount,
+            skippedSamples,
+            configName: cfg.name,
+          },
         });
 
-        summary.push({ configId: cfg.id, name: cfg.name, status, newCount, updatedCount, stoppedEarly });
+        summary.push({
+          configId: cfg.id,
+          name: cfg.name,
+          status,
+          newCount,
+          updatedCount,
+          skippedCount,
+          stoppedEarly,
+        });
       } catch (cfgErr) {
         await finishLog(log.id, log.started_at, {
           status: 'error',
           newCount,
           updatedCount,
           errorMessage: cfgErr.message,
+          details: { skippedCount, skippedSamples, configName: cfg.name },
         });
         summary.push({ configId: cfg.id, name: cfg.name, status: 'error', error: cfgErr.message });
       }
@@ -343,7 +422,7 @@ export async function runReconciler({ batchLimit = 60 } = {}) {
     for (const item of activeListings) {
       await sleepJitter(3500, 9000);
       try {
-        const res = await fetchStealthHtml(item.url);
+        const res = await fetchStealthHtml(item.url, { preferDesktop: true });
         const offlineCheck = isListingOfflineHtml(
           res.html,
           res.finalUrl,

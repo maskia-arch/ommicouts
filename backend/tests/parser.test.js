@@ -97,20 +97,50 @@ test('detectWbsRequired distinguishes WBS required vs not required', () => {
   assert.equal(detectWbsRequired('Ohne WBS anmietbar'), false);
 });
 
-test('extractSearchListingLinks skips topads and preserves newest-first order', () => {
+test('extractSearchListingLinks skips topads and altads and preserves newest-first order', () => {
   const html = `
     <div id="srchrslt-adtable-topads">
-      <article class="aditem is-topad"><a href="/s-anzeige/top/999999999-203-2093">Top</a></article>
+      <article class="aditem is-topad"><a href="/s-anzeige/top/999999999-203-1001">Top</a></article>
     </div>
-    <ul>
-      <article class="aditem"><a href="/s-anzeige/neu-1/111111111-203-2093">Neu 1</a></article>
-      <article class="aditem"><a href="/s-anzeige/neu-2/222222222-203-2093">Neu 2</a></article>
+    <ul id="srchrslt-adtable">
+      <li class="relative"><a href="/s-anzeige/neu-1/111111111-203-1001">Neu 1</a></li>
+      <li class="relative"><a href="/s-anzeige/neu-2/222222222-203-1001">Neu 2</a></li>
+    </ul>
+    <ul id="srchrslt-adtable-altads">
+      <li class="relative"><a href="/s-anzeige/duesseldorf-leak/333333333-203-2093">Leak</a></li>
     </ul>
   `;
   const links = extractSearchListingLinks(html, 'https://www.kleinanzeigen.de', 'kleinanzeigen');
   assert.equal(links.length, 2);
   assert.equal(links[0].externalId, 'ka_111111111');
   assert.equal(links[1].externalId, 'ka_222222222');
+});
+
+test('parseListingDetail ignores WebSite JSON-LD name="Kleinanzeigen" and uses real #viewad-title', () => {
+  const html = `
+    <html>
+      <head>
+        <script type="application/ld+json">
+          { "@context": "https://schema.org", "@type": "WebSite", "name": "Kleinanzeigen" }
+        </script>
+      </head>
+      <body>
+        <h1 id="viewad-title">2-Zimmer Wohnung in Schalke</h1>
+        <div id="viewad-price">290 €</div>
+        <div id="viewad-locality">45881 Nordrhein-Westfalen - Gelsenkirchen</div>
+        <div id="viewad-description-text">52 m², 2 Zimmer, Kaltmiete 290 €, Nebenkosten 75 €.</div>
+      </body>
+    </html>
+  `;
+  const parsed = parseListingDetail(
+    html,
+    'https://www.kleinanzeigen.de/s-anzeige/2-zimmer-schalke/777888999-203-1004',
+    'kleinanzeigen',
+    'Gelsenkirchen'
+  );
+  assert.equal(parsed.title, '2-Zimmer Wohnung in Schalke');
+  assert.equal(parsed.zipcode, '45881');
+  assert.equal(parsed.cold_rent, 290);
 });
 
 test('isListingOfflineHtml detects 404, redirects, and offline markers', () => {

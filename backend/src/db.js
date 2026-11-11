@@ -18,6 +18,13 @@ pool.on('error', (err) => {
   console.error('[DB] Unerwarteter Pool-Fehler:', err.message);
 });
 
+const STRICT_KA_ALL_URL =
+  'https://www.kleinanzeigen.de/s-wohnung-mieten/gelsenkirchen/anzeige:angebote/preis:150:850/c203l1004+wohnung_mieten.qm_d:20,+wohnung_mieten.zimmer_d:1,0?sortingField=SORTING_DATE';
+const STRICT_KA_PRIV_URL =
+  'https://www.kleinanzeigen.de/s-wohnung-mieten/gelsenkirchen/anzeige:angebote/anbieter:privat/preis:150:850/c203l1001+wohnung_mieten.qm_d:20,+wohnung_mieten.zimmer_d:1,0?sortingField=SORTING_DATE';
+const STRICT_IW_URL =
+  'https://www.immowelt.de/suche/mieten/wohnung/nordrhein-westfalen/gelsenkirchen-45879/ad08de2278?priceMax=850&distributionTypes=Rent&estateTypes=Apartment&order=DateDesc';
+
 const INIT_SQL = `
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -88,13 +95,38 @@ CREATE TABLE IF NOT EXISTS scraper_configs (
     CONSTRAINT uq_scraper_portal_url UNIQUE (portal, search_url)
 );
 
+-- Migrate legacy pre-strict-mode seed URLs if present
+UPDATE scraper_configs
+SET name = 'Kleinanzeigen Gelsenkirchen (Angebote, 150-850 EUR, ab 20m², ab 1 Zi.)',
+    search_url = '${STRICT_KA_ALL_URL}',
+    updated_at = NOW()
+WHERE portal = 'kleinanzeigen'
+  AND search_url LIKE '%c203l2093%';
+
+UPDATE scraper_configs
+SET name = 'Immowelt Gelsenkirchen (Angebote bis 850 EUR, Neueste, Radius 0)',
+    search_url = '${STRICT_IW_URL}',
+    updated_at = NOW()
+WHERE portal = 'immowelt'
+  AND search_url LIKE '%/liste/gelsenkirchen/%';
+
 INSERT INTO scraper_configs (portal, city, name, search_url, cron_expression, jitter_min_ms, jitter_max_ms, is_active)
 VALUES
     (
         'kleinanzeigen',
         'Gelsenkirchen',
-        'Kleinanzeigen Gelsenkirchen (bis 850 EUR Kaltmiete, Neueste)',
-        'https://www.kleinanzeigen.de/s-wohnung-mieten/gelsenkirchen/preis::850/c203l2093?sortingField=SORTING_DATE',
+        'Kleinanzeigen Gelsenkirchen (Angebote, 150-850 EUR, ab 20m², ab 1 Zi.)',
+        '${STRICT_KA_ALL_URL}',
+        '*/20 * * * *',
+        4000,
+        15000,
+        TRUE
+    ),
+    (
+        'kleinanzeigen',
+        'Gelsenkirchen',
+        'Kleinanzeigen GE-45894 Privatvermieter (Angebote, 150-850 EUR)',
+        '${STRICT_KA_PRIV_URL}',
         '*/20 * * * *',
         4000,
         15000,
@@ -103,8 +135,8 @@ VALUES
     (
         'immowelt',
         'Gelsenkirchen',
-        'Immowelt Gelsenkirchen (bis 850 EUR, Neueste)',
-        'https://www.immowelt.de/liste/gelsenkirchen/wohnungen/mieten?pma=850&sd=DESC&sf=TIMESTAMP',
+        'Immowelt Gelsenkirchen (Angebote bis 850 EUR, Neueste, Radius 0)',
+        '${STRICT_IW_URL}',
         '*/20 * * * *',
         4000,
         15000,
@@ -131,12 +163,47 @@ CREATE TABLE IF NOT EXISTS scraper_logs (
 CREATE INDEX IF NOT EXISTS idx_scraper_logs_started_at ON scraper_logs (started_at DESC);
 `;
 
+export async function cleanupInvalidListings() {
+  const { rowCount } = await pool.query(`
+    DELETE FROM listings
+    WHERE (LOWER(city) = 'gelsenkirchen' AND (zipcode IS NULL OR zipcode !~ '^458(79|8[0-9]|9[0-9])$'))
+       OR cold_rent IS NULL
+       OR cold_rent < 150
+       OR sqm IS NULL
+       OR sqm < 20
+       OR rooms IS NULL
+       OR rooms < 1
+       OR LOWER(title) IN ('kleinanzeigen', 'immowelt')
+       OR title ~* '\\m(suche|suchen|gesucht|wohnungssuche|suchend|tausche|wohnungstausch|wg-zimmer|monteurzimmer|stellplatz|garage|gewerbe|ladenlokal)\\M'
+       OR url ~* '(gesucht|wohnungssuche|suche-wohnung|wg-zimmer|stellplatz|garage)'
+  `);
+
+  const countRes = await pool.query(`SELECT COUNT(*)::int AS remaining FROM listings`);
+  return {
+    deletedCount: rowCount || 0,
+    remainingCount: countRes.rows[0]?.remaining || 0,
+  };
+}
+
 export async function ensureDatabaseInitialized(retries = 10, delayMs = 2000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       await pool.query('SELECT 1');
       await pool.query(INIT_SQL);
-      console.log('[DB] PostgreSQL verbunden & Schema/Seed-Daten verifiziert.');
+
+      // Clean up stale 'running' logs from previous container restarts
+      await pool.query(`
+        UPDATE scraper_logs
+        SET status = 'error',
+            finished_at = NOW(),
+            error_message = COALESCE(error_message, 'Durch Server-Neustart unterbrochen')
+        WHERE status = 'running' AND started_at < NOW() - INTERVAL '5 minutes'
+      `);
+
+      const cleanup = await cleanupInvalidListings();
+      console.log(
+        `[DB] PostgreSQL verbunden, Schema/Configs aktuell. Cleanup: ${cleanup.deletedCount} fehlerhafte Listings entfernt (${cleanup.remainingCount} verbleibend).`
+      );
       return;
     } catch (err) {
       console.warn(

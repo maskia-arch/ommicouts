@@ -59,6 +59,17 @@ const PRIVATE_KEYWORDS = [
   'eigentümer',
 ];
 
+const VALID_JSONLD_LISTING_TYPES = new Set([
+  'apartment',
+  'residence',
+  'realestatelisting',
+  'singlefamilyresidence',
+  'house',
+  'product',
+  'offer',
+  'accommodation',
+]);
+
 export function detectPortal(url) {
   const lower = String(url || '').toLowerCase();
   if (lower.includes('kleinanzeigen.de')) return 'kleinanzeigen';
@@ -130,7 +141,7 @@ export function buildPagedSearchUrl(baseUrl, page, portal) {
       if (/\/seite:\d+\//i.test(u.pathname)) {
         u.pathname = u.pathname.replace(/\/seite:\d+\//i, `/seite:${page}/`);
       } else {
-        u.pathname = u.pathname.replace(/\/(c\d+l\d+)$/i, `/seite:${page}/$1`);
+        u.pathname = u.pathname.replace(/\/(c\d+l\d+.*)$/i, `/seite:${page}/$1`);
         if (!/\/seite:\d+\//i.test(u.pathname)) {
           u.pathname = `${u.pathname.replace(/\/$/, '')}/seite:${page}`;
         }
@@ -139,7 +150,11 @@ export function buildPagedSearchUrl(baseUrl, page, portal) {
     }
 
     if (portal === 'immowelt') {
-      u.searchParams.set('sp', String(page));
+      if (u.pathname.includes('/suche/')) {
+        u.searchParams.set('page', String(page));
+      } else {
+        u.searchParams.set('sp', String(page));
+      }
       return u.toString();
     }
 
@@ -159,7 +174,6 @@ export function parseGermanNumber(raw) {
   const str = String(raw).trim();
   if (!str) return null;
 
-  // Match number token like 1.234,56 or 450,50 or 450
   const m = str.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)/);
   if (!m) return null;
 
@@ -191,12 +205,19 @@ function collectJsonLd($) {
     if (!raw) return;
     const parsed = safeJsonParse(raw.trim());
     if (!parsed) return;
-    if (Array.isArray(parsed)) {
-      items.push(...parsed);
-    } else if (parsed['@graph'] && Array.isArray(parsed['@graph'])) {
-      items.push(...parsed['@graph']);
-    } else {
-      items.push(parsed);
+    const list = Array.isArray(parsed)
+      ? parsed
+      : parsed['@graph'] && Array.isArray(parsed['@graph'])
+        ? parsed['@graph']
+        : [parsed];
+
+    for (const item of list) {
+      if (!item || typeof item !== 'object') continue;
+      const typeVal = Array.isArray(item['@type']) ? item['@type'][0] : item['@type'];
+      const lowerType = String(typeVal || '').toLowerCase();
+      if (VALID_JSONLD_LISTING_TYPES.has(lowerType)) {
+        items.push(item);
+      }
     }
   });
   return items;
@@ -208,9 +229,6 @@ function collectNextData($) {
   return safeJsonParse(raw.trim());
 }
 
-/**
- * Recursively finds objects/strings matching keys in hydration JSON.
- */
 function deepSearchObjects(obj, predicate, results = [], seen = new Set()) {
   if (!obj || typeof obj !== 'object' || seen.has(obj)) return results;
   seen.add(obj);
@@ -223,7 +241,88 @@ function deepSearchObjects(obj, predicate, results = [], seen = new Set()) {
   return results;
 }
 
-export function extractSearchListingLinks(html, baseUrl, portal) {
+function spacedText($, rootEl) {
+  const tokens = [];
+  const walk = (node) => {
+    if (!node) return;
+    if (node.type === 'text') {
+      const t = String(node.data || '').replace(/\s+/g, ' ').trim();
+      if (t) tokens.push(t);
+    } else if (node.children) {
+      for (const child of node.children) walk(child);
+    }
+  };
+  walk(rootEl);
+  return tokens.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+function parseImmoweltSerpCard($, cardEl, absUrl, defaultCity) {
+  const cardText = spacedText($, cardEl);
+  const externalId = extractExternalId(absUrl, 'immowelt');
+
+  // Remove leading "1 / 15" photo pagination prefix before parsing price
+  const cleanedText = cardText.replace(/^\s*\d+\s*\/\s*\d+\s+/, ' ');
+
+  let coldRent = null;
+  const priceMatch =
+    cleanedText.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*€\s*(?:Kaltmiete)?/i);
+  if (priceMatch) coldRent = parseGermanNumber(priceMatch[1]);
+
+  let rooms = null;
+  const roomMatch = cleanedText.match(/(\d{1,2}(?:[.,]\d)?)\s*Zimmer/i);
+  if (roomMatch) rooms = parseGermanNumber(roomMatch[1]);
+
+  let sqm = null;
+  const sqmMatch = cleanedText.match(/(\d{1,4}(?:[.,]\d{1,2})?)\s*m²/i);
+  if (sqmMatch) sqm = parseGermanNumber(sqmMatch[1]);
+
+  const zipcode = detectZipcode(cleanedText);
+  const district = detectDistrict(cleanedText, defaultCity);
+
+  // Extract headline / title from card link or heading, falling back to concise description
+  let title =
+    $(cardEl).find('[data-testid*="title"], h2, h3').first().text().replace(/\s+/g, ' ').trim() ||
+    $(cardEl).find('a[href*="/expose/"]').attr('title')?.trim() ||
+    '';
+
+  if (!title) {
+    const locLabel = district && district !== defaultCity ? `${defaultCity}-${district}` : defaultCity;
+    title = `${rooms ? `${rooms}-Zimmer-Wohnung` : 'Mietwohnung'} in ${locLabel}${sqm ? ` (${sqm} m²)` : ''}`;
+  }
+
+  // Provider/Landlord name is usually near the top of the card before "1 / 15"
+  const providerPrefix = cardText.split(/\d+\s*\/\s*\d+/)[0]?.trim() || '';
+  const isPrivateLandlord = detectPrivateLandlord({
+    sellerName: providerPrefix,
+    fullText: `${providerPrefix} ${cleanedText}`,
+    portal: 'immowelt',
+  });
+
+  const wbsRequired = detectWbsRequired(cleanedText);
+  const locSnippetMatch = cleanedText.match(/[^·\n]{0,60}Gelsenkirchen(?:\s*\(\d{5}\))?/i);
+
+  return {
+    external_id: externalId,
+    portal: 'immowelt',
+    title: title.slice(0, 300),
+    url: absUrl,
+    city: defaultCity,
+    district: district || defaultCity,
+    zipcode,
+    locality_raw: locSnippetMatch ? locSnippetMatch[0] : cleanedText.slice(0, 200),
+    cold_rent: coldRent,
+    additional_costs: 0,
+    heating_costs: 0,
+    sqm,
+    rooms,
+    is_private_landlord: isPrivateLandlord,
+    wbs_required: wbsRequired,
+    is_wanted: false,
+    description_snippet: cleanedText.slice(0, 500),
+  };
+}
+
+export function extractSearchListingLinks(html, baseUrl, portal, defaultCity = 'Gelsenkirchen') {
   const $ = cheerio.load(html);
   const found = [];
   const seenIds = new Set();
@@ -249,21 +348,63 @@ export function extractSearchListingLinks(html, baseUrl, portal) {
       url: absUrl,
       portal,
       quickTitle: quickMeta.title ? String(quickMeta.title).trim() : null,
+      serpParsed: quickMeta.serpParsed || null,
     });
   };
 
-  // 1. JSON-LD ItemList
-  for (const ld of collectJsonLd($)) {
-    if (ld['@type'] === 'ItemList' && Array.isArray(ld.itemListElement)) {
-      for (const el of ld.itemListElement) {
-        const url = el.url || el.item?.url;
-        const name = el.name || el.item?.name;
-        pushCandidate(url, { title: name });
-      }
+  if (portal === 'kleinanzeigen') {
+    // Hard DOM restriction: remove alternative/out-of-area ads and top-ads completely!
+    $('#srchrslt-adtable-altads, #srchrslt-adtable-topads, .is-topad').remove();
+
+    const mainTable = $('#srchrslt-adtable');
+    if (mainTable.length > 0) {
+      mainTable.find('li, article.aditem').each((_, el) => {
+        const $el = $(el);
+        if ($el.hasClass('is-topad') || $el.closest('#srchrslt-adtable-altads').length > 0) return;
+        const link = $el.find('a[href*="/s-anzeige/"]').first();
+        const href = link.attr('href') || $el.attr('data-href') || $el.find('[data-href*="/s-anzeige/"]').first().attr('data-href');
+        const title = link.text().trim() || $el.find('.text-module-begin a, h2').first().text().trim();
+        pushCandidate(href, { title });
+      });
+    } else {
+      // Fallback only for test fixtures using article.aditem without #srchrslt-adtable wrapper
+      $('article.aditem').each((_, el) => {
+        const link = $(el).find('a[href*="/s-anzeige/"]').first();
+        pushCandidate(link.attr('href'), { title: link.text().trim() });
+      });
     }
+    return found;
   }
 
-  // 2. __NEXT_DATA__ hydration
+  if (portal === 'immowelt') {
+    const cards = $('[data-testid="serp-core-classified-card-testid"]');
+    if (cards.length > 0) {
+      cards.each((_, el) => {
+        const href = $(el).find('a[href*="/expose/"]').first().attr('href');
+        if (!href) return;
+        let absUrl;
+        try {
+          absUrl = normalizeListingUrl(new URL(href, baseUrl).toString());
+        } catch {
+          return;
+        }
+        const serpParsed = parseImmoweltSerpCard($, el, absUrl, defaultCity);
+        pushCandidate(absUrl, { title: serpParsed.title, serpParsed });
+      });
+      return found;
+    }
+
+    $('a[href*="/expose/"]').each((_, el) => {
+      pushCandidate($(el).attr('href'), { title: $(el).text().trim() });
+    });
+    return found;
+  }
+
+  // Other portals: JSON-LD + __NEXT_DATA__ + DOM
+  for (const ld of collectJsonLd($)) {
+    if (ld.url) pushCandidate(ld.url, { title: ld.name });
+  }
+
   const nextData = collectNextData($);
   if (nextData) {
     const urlMatches = deepSearchObjects(
@@ -277,35 +418,12 @@ export function extractSearchListingLinks(html, baseUrl, portal) {
     }
   }
 
-  // 3. Portal DOM selectors (preserving newest-first visual order)
-  if (portal === 'kleinanzeigen') {
-    // Skip top-ads / featured banners if marked, or keep main list items
-    $('article.aditem').each((_, el) => {
-      const isTopAd = $(el).hasClass('is-topad') || $(el).closest('#srchrslt-adtable-topads').length > 0;
-      if (isTopAd) return;
-      const link = $(el).find('a[href*="/s-anzeige/"]').first();
-      const href = link.attr('href');
-      const title = link.text().trim() || $(el).find('.text-module-begin a').text().trim();
-      pushCandidate(href, { title });
-    });
-    // Fallback if layout differs
-    if (found.length === 0) {
-      $('a[href*="/s-anzeige/"]').each((_, el) => {
-        pushCandidate($(el).attr('href'), { title: $(el).text().trim() });
-      });
+  $('a[href]').each((_, el) => {
+    const href = $(el).attr('href');
+    if (href && (href.includes('/expose/') || href.includes('/s-anzeige/'))) {
+      pushCandidate(href, { title: $(el).text().trim() });
     }
-  } else if (portal === 'immowelt') {
-    $('a[href*="/expose/"]').each((_, el) => {
-      pushCandidate($(el).attr('href'), { title: $(el).text().trim() });
-    });
-  } else {
-    $('a[href]').each((_, el) => {
-      const href = $(el).attr('href');
-      if (href && (href.includes('/expose/') || href.includes('/s-anzeige/'))) {
-        pushCandidate(href, { title: $(el).text().trim() });
-      }
-    });
-  }
+  });
 
   return found;
 }
@@ -328,7 +446,6 @@ export function detectDistrict(text, fallbackCity = 'Gelsenkirchen') {
 
 export function detectZipcode(text) {
   if (!text) return null;
-  // Prefer Gelsenkirchen PLZ range (45879 - 45899)
   const geMatch = String(text).match(/\b(458[7-9]\d)\b/);
   if (geMatch) return geMatch[1];
   const anyMatch = String(text).match(/\b(\d{5})\b/);
@@ -363,7 +480,6 @@ export function detectPrivateLandlord({
     combinedSeller.includes('privat') ||
     sellerTypeRaw.toLowerCase() === 'private'
   ) {
-    // Double check sellerName doesn't explicitly contain commercial entity
     if (!COMMERCIAL_KEYWORDS.some((kw) => sellerName.toLowerCase().includes(kw))) {
       return true;
     }
@@ -390,8 +506,14 @@ export function detectPrivateLandlord({
     }
   }
 
-  // On Kleinanzeigen, if no commercial tag is present and no GmbH/Makler keywords appear,
-  // check for explicit Kleinanzeigen badge or default conservative false unless verified
+  // On Immowelt SERP cards, private individuals often appear as "Vorname Nachname" or "Frau/Herr ..." without GmbH/Immobilien
+  if (portal === 'immowelt' && sellerName.trim()) {
+    const cleanName = sellerName.trim();
+    if (/^(?:frau|herr)\s+/i.test(cleanName) || /^[A-ZÄÖÜ][a-zäöüß-]+\s+[A-ZÄÖÜ][a-zäöüß-]+$/.test(cleanName)) {
+      return true;
+    }
+  }
+
   if (portal === 'kleinanzeigen' && lowerText.includes('privater nutzer')) {
     return true;
   }
@@ -442,16 +564,16 @@ function extractCostsFromText(text) {
     }
   }
 
-  const sqmMatch = t.match(
-    /(?:wohnfläche|fläche|größe)\s*[:\-]?\s*(?:ca\.?\s*)?(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:m²|qm|m2)/i
-  ) || t.match(/(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:m²|qm)\b/i);
+  const sqmMatch =
+    t.match(/(?:wohnfläche|fläche|größe)\s*[:\-]?\s*(?:ca\.?\s*)?(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:m²|qm|m2)/i) ||
+    t.match(/(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:m²|qm)\b/i);
   if (sqmMatch) {
     sqm = parseGermanNumber(sqmMatch[1]);
   }
 
-  const roomMatch = t.match(
-    /(?:zimmer(?:anzahl)?)\s*[:\-]?\s*(\d{1,2}(?:[.,]\d)?)/i
-  ) || t.match(/(\d{1,2}(?:[.,]\d)?)\s*(?:zimmer|zi\.|zimm\b)/i);
+  const roomMatch =
+    t.match(/(?:zimmer(?:anzahl)?)\s*[:\-]?\s*(\d{1,2}(?:[.,]\d)?)/i) ||
+    t.match(/(\d{1,2}(?:[.,]\d)?)\s*(?:zimmer|zi\.|zimm\b)/i);
   if (roomMatch) {
     rooms = parseGermanNumber(roomMatch[1]);
   }
@@ -460,7 +582,7 @@ function extractCostsFromText(text) {
 }
 
 /**
- * Parses a listing detail HTML page using JSON-LD, __NEXT_DATA__, DOM & Regex fallback.
+ * Parses a listing detail HTML page using DOM, valid JSON-LD, __NEXT_DATA__ & Regex fallback.
  * Never persists description text or image URLs.
  */
 export function parseListingDetail(html, url, portal = null, defaultCity = 'Gelsenkirchen') {
@@ -477,11 +599,61 @@ export function parseListingDetail(html, url, portal = null, defaultCity = 'Gels
   let rooms = null;
   let district = null;
   let zipcode = null;
+  let localityRaw = '';
   let sellerTypeRaw = '';
   let sellerName = '';
   let descriptionText = '';
+  let isWanted = false;
 
-  // 1. JSON-LD extraction
+  // 1. Portal-specific DOM extraction FIRST (especially for Kleinanzeigen where WebSite JSON-LD had "Kleinanzeigen")
+  if (resolvedPortal === 'kleinanzeigen') {
+    title =
+      $('#viewad-title').text().replace(/\s+/g, ' ').trim() ||
+      $('meta[property="og:title"]').attr('content')?.trim() ||
+      '';
+
+    const priceText = $('#viewad-price').text().trim();
+    if (priceText) {
+      coldRent = parseGermanNumber(priceText);
+    }
+
+    localityRaw = $('#viewad-locality').text().replace(/\s+/g, ' ').trim();
+    if (localityRaw) {
+      zipcode = detectZipcode(localityRaw);
+      district = detectDistrict(localityRaw, defaultCity);
+    }
+
+    const adTypeText = `${$('#viewad-adtype').text()} ${$('#viewad-breadcrumbs').text()}`.toLowerCase();
+    if (adTypeText.includes('gesuch') || /"adtype"\s*:\s*"wanted"/i.test(html)) {
+      isWanted = true;
+    }
+
+    $('.addetailslist--detail').each((_, el) => {
+      const full = $(el).text().replace(/\s+/g, ' ').trim();
+      const val = $(el).find('.addetailslist--detail--value').text().trim() || full;
+      const lower = full.toLowerCase();
+      if (lower.includes('wohnfläche') && sqm === null) sqm = parseGermanNumber(val);
+      if (lower.includes('zimmer') && rooms === null) rooms = parseGermanNumber(val);
+      if ((lower.includes('nebenkosten') || lower.includes('betriebskosten')) && additionalCosts === null) {
+        additionalCosts = parseGermanNumber(val);
+      }
+      if (lower.includes('heizkosten') && heatingCosts === null) {
+        heatingCosts = parseGermanNumber(val);
+      }
+      if (lower.includes('kaltmiete') && coldRent === null) {
+        coldRent = parseGermanNumber(val);
+      }
+    });
+
+    const contactText = $('#viewad-contact, .userprofile-vip').text().replace(/\s+/g, ' ').trim();
+    if (contactText) {
+      sellerName += ` ${contactText}`;
+    }
+    const descDom = $('#viewad-description-text').text().replace(/\s+/g, ' ').trim();
+    if (descDom) descriptionText += ` ${descDom}`;
+  }
+
+  // 2. Valid Listing JSON-LD extraction (ignores WebSite / BreadcrumbList / ImageObject)
   const jsonLds = collectJsonLd($);
   for (const ld of jsonLds) {
     if (!title && (ld.name || ld.headline)) {
@@ -508,13 +680,14 @@ export function parseListingDetail(html, url, portal = null, defaultCity = 'Gels
     }
     if (ld.address) {
       if (ld.address.postalCode && !zipcode) zipcode = String(ld.address.postalCode).trim();
-      if (ld.address.addressLocality && !district) {
-        district = detectDistrict(ld.address.addressLocality, defaultCity);
+      if (ld.address.addressLocality) {
+        if (!localityRaw) localityRaw = String(ld.address.addressLocality).trim();
+        if (!district) district = detectDistrict(ld.address.addressLocality, defaultCity);
       }
     }
   }
 
-  // 2. __NEXT_DATA__ hydration extraction
+  // 3. __NEXT_DATA__ hydration extraction
   const nextData = collectNextData($);
   if (nextData) {
     const priceObjs = deepSearchObjects(
@@ -557,50 +730,11 @@ export function parseListingDetail(html, url, portal = null, defaultCity = 'Gels
     }
   }
 
-  // 3. Portal-specific DOM extraction
-  if (resolvedPortal === 'kleinanzeigen') {
-    if (!title) title = $('#viewad-title').text().replace(/\s+/g, ' ').trim();
-    const priceText = $('#viewad-price').text().trim();
-    if (coldRent === null && priceText) {
-      coldRent = parseGermanNumber(priceText);
-    }
-
-    const locality = $('#viewad-locality').text().replace(/\s+/g, ' ').trim();
-    if (locality) {
-      if (!zipcode) zipcode = detectZipcode(locality);
-      if (!district) district = detectDistrict(locality, defaultCity);
-    }
-
-    $('.addetailslist--detail').each((_, el) => {
-      const full = $(el).text().replace(/\s+/g, ' ').trim();
-      const val = $(el).find('.addetailslist--detail--value').text().trim() || full;
-      const lower = full.toLowerCase();
-      if (lower.includes('wohnfläche') && sqm === null) sqm = parseGermanNumber(val);
-      if (lower.includes('zimmer') && rooms === null) rooms = parseGermanNumber(val);
-      if ((lower.includes('nebenkosten') || lower.includes('betriebskosten')) && additionalCosts === null) {
-        additionalCosts = parseGermanNumber(val);
-      }
-      if (lower.includes('heizkosten') && heatingCosts === null) {
-        heatingCosts = parseGermanNumber(val);
-      }
-      if (lower.includes('kaltmiete') && coldRent === null) {
-        coldRent = parseGermanNumber(val);
-      }
-    });
-
-    const contactText = $('#viewad-contact, .userprofile-vip').text().replace(/\s+/g, ' ').trim();
-    if (contactText) {
-      sellerName += ` ${contactText}`;
-    }
-    const descDom = $('#viewad-description-text').text().replace(/\s+/g, ' ').trim();
-    if (descDom) descriptionText += ` ${descDom}`;
-  } else {
-    if (!title) {
-      title =
-        $('h1').first().text().replace(/\s+/g, ' ').trim() ||
-        $('meta[property="og:title"]').attr('content')?.trim() ||
-        $('title').text().trim();
-    }
+  if (!title) {
+    title =
+      $('h1').first().text().replace(/\s+/g, ' ').trim() ||
+      $('meta[property="og:title"]').attr('content')?.trim() ||
+      $('title').text().trim();
   }
 
   if (!descriptionText) {
@@ -619,8 +753,8 @@ export function parseListingDetail(html, url, portal = null, defaultCity = 'Gels
   if (heatingCosts === null) heatingCosts = regexParsed.heatingCosts ?? 0;
   if (sqm === null) sqm = regexParsed.sqm;
   if (rooms === null) rooms = regexParsed.rooms;
-  if (!zipcode) zipcode = detectZipcode(fullText);
-  if (!district) district = detectDistrict(fullText, defaultCity);
+  if (!zipcode) zipcode = detectZipcode(`${localityRaw} ${fullText}`);
+  if (!district) district = detectDistrict(`${localityRaw} ${fullText}`, defaultCity);
 
   const isPrivateLandlord = detectPrivateLandlord({
     sellerTypeRaw,
@@ -639,6 +773,7 @@ export function parseListingDetail(html, url, portal = null, defaultCity = 'Gels
     city: defaultCity,
     district: district || defaultCity,
     zipcode,
+    locality_raw: localityRaw,
     cold_rent: coldRent,
     additional_costs: additionalCosts ?? 0,
     heating_costs: heatingCosts ?? 0,
@@ -646,6 +781,8 @@ export function parseListingDetail(html, url, portal = null, defaultCity = 'Gels
     rooms,
     is_private_landlord: Boolean(isPrivateLandlord),
     wbs_required: Boolean(wbsRequired),
+    is_wanted: Boolean(isWanted),
+    description_snippet: descriptionText.slice(0, 800),
   };
 }
 
@@ -662,7 +799,7 @@ export function isListingOfflineHtml(html, finalUrl, statusCode, portal) {
   ) {
     return { offline: true, reason: 'Redirect zur Übersicht' };
   }
-  if (portal === 'immowelt' && lowerUrl.includes('/liste/') && !lowerUrl.includes('/expose/')) {
+  if (portal === 'immowelt' && (lowerUrl.includes('/liste/') || lowerUrl.includes('/suche/')) && !lowerUrl.includes('/expose/')) {
     return { offline: true, reason: 'Redirect zur Immowelt-Liste' };
   }
 

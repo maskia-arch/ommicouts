@@ -87,8 +87,18 @@ VALUES
     (
         'kleinanzeigen',
         'Gelsenkirchen',
-        'Kleinanzeigen Gelsenkirchen (bis 850 EUR Kaltmiete, Neueste)',
-        'https://www.kleinanzeigen.de/s-wohnung-mieten/gelsenkirchen/preis::850/c203l2093?sortingField=SORTING_DATE',
+        'Kleinanzeigen Gelsenkirchen (Angebote, 150-850 EUR, ab 20m², ab 1 Zi.)',
+        'https://www.kleinanzeigen.de/s-wohnung-mieten/gelsenkirchen/anzeige:angebote/preis:150:850/c203l1004+wohnung_mieten.qm_d:20,+wohnung_mieten.zimmer_d:1,0?sortingField=SORTING_DATE',
+        '*/20 * * * *',
+        4000,
+        15000,
+        TRUE
+    ),
+    (
+        'kleinanzeigen',
+        'Gelsenkirchen',
+        'Kleinanzeigen GE-45894 Privatvermieter (Angebote, 150-850 EUR)',
+        'https://www.kleinanzeigen.de/s-wohnung-mieten/gelsenkirchen/anzeige:angebote/anbieter:privat/preis:150:850/c203l1001+wohnung_mieten.qm_d:20,+wohnung_mieten.zimmer_d:1,0?sortingField=SORTING_DATE',
         '*/20 * * * *',
         4000,
         15000,
@@ -97,8 +107,8 @@ VALUES
     (
         'immowelt',
         'Gelsenkirchen',
-        'Immowelt Gelsenkirchen (bis 850 EUR, Neueste)',
-        'https://www.immowelt.de/liste/gelsenkirchen/wohnungen/mieten?pma=850&sd=DESC&sf=TIMESTAMP',
+        'Immowelt Gelsenkirchen (Angebote bis 850 EUR, Neueste, Radius 0)',
+        'https://www.immowelt.de/suche/mieten/wohnung/nordrhein-westfalen/gelsenkirchen-45879/ad08de2278?priceMax=850&distributionTypes=Rent&estateTypes=Apartment&order=DateDesc',
         '*/20 * * * *',
         4000,
         15000,

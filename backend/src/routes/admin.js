@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { pool } from '../db.js';
+import { cleanupInvalidListings, pool } from '../db.js';
 import { requireAdminKey } from '../middleware/auth.js';
 import {
   crawlSingleUrl,
@@ -348,6 +348,15 @@ router.delete('/listings/:id', async (req, res) => {
       return res.status(404).json({ error: 'Inserat nicht gefunden.' });
     }
     return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/listings/cleanup', async (_req, res) => {
+  try {
+    const result = await cleanupInvalidListings();
+    return res.json({ ok: true, ...result });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
