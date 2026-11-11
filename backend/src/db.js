@@ -19,9 +19,9 @@ pool.on('error', (err) => {
 });
 
 const STRICT_KA_ALL_URL =
-  'https://www.kleinanzeigen.de/s-wohnung-mieten/gelsenkirchen/anzeige:angebote/preis:150:850/c203l1004+wohnung_mieten.qm_d:20,+wohnung_mieten.zimmer_d:1,0?sortingField=SORTING_DATE';
+  'https://www.kleinanzeigen.de/s-wohnung-mieten/gelsenkirchen/anzeige:angebote/preis:150:850/c203l1000+wohnung_mieten.qm_d:20,+wohnung_mieten.zimmer_d:1,0?sortingField=SORTING_DATE';
 const STRICT_KA_PRIV_URL =
-  'https://www.kleinanzeigen.de/s-wohnung-mieten/gelsenkirchen/anzeige:angebote/anbieter:privat/preis:150:850/c203l1001+wohnung_mieten.qm_d:20,+wohnung_mieten.zimmer_d:1,0?sortingField=SORTING_DATE';
+  'https://www.kleinanzeigen.de/s-wohnung-mieten/gelsenkirchen/anzeige:angebote/anbieter:privat/preis:150:850/c203l1000+wohnung_mieten.qm_d:20,+wohnung_mieten.zimmer_d:1,0?sortingField=SORTING_DATE';
 const STRICT_IW_URL =
   'https://www.immowelt.de/suche/mieten/wohnung/nordrhein-westfalen/gelsenkirchen-45879/ad08de2278?priceMax=850&distributionTypes=Rent&estateTypes=Apartment&order=DateDesc';
 
@@ -49,6 +49,25 @@ VALUES
     ('Gelsenkirchen', 5, 110.00, 841.50, 15.00, 116.60),
     ('Gelsenkirchen', 6, 125.00, 958.10, 15.00, 116.60)
 ON CONFLICT (city, bg_size) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS kdu_sources (
+    id SERIAL PRIMARY KEY,
+    city VARCHAR(100) UNIQUE NOT NULL,
+    source_url TEXT,
+    zip_prefixes VARCHAR(200),
+    search_max_rent_eur NUMERIC(8, 2) DEFAULT 850.00,
+    auto_sync_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    sync_cron VARCHAR(100) NOT NULL DEFAULT '0 4 * * *',
+    last_synced_at TIMESTAMP,
+    last_sync_status VARCHAR(30),
+    last_sync_message TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO kdu_sources (city, zip_prefixes, search_max_rent_eur, auto_sync_enabled, sync_cron, last_sync_status, last_sync_message)
+VALUES ('Gelsenkirchen', '458', 850.00, FALSE, '0 4 * * *', 'manual', 'Standard-Richtwerte Gelsenkirchen')
+ON CONFLICT (city) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS listings (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -95,13 +114,37 @@ CREATE TABLE IF NOT EXISTS scraper_configs (
     CONSTRAINT uq_scraper_portal_url UNIQUE (portal, search_url)
 );
 
--- Migrate legacy pre-strict-mode seed URLs if present
+-- Migrate legacy or partial-district Gelsenkirchen seed URLs safely to full-city c203l1000
+DELETE FROM scraper_configs sc
+WHERE sc.portal = 'kleinanzeigen'
+  AND LOWER(sc.city) = 'gelsenkirchen'
+  AND (sc.search_url LIKE '%c203l2093%' OR sc.search_url LIKE '%c203l1004%' OR sc.search_url LIKE '%c203l1001%')
+  AND EXISTS (
+    SELECT 1 FROM scraper_configs s2
+    WHERE s2.portal = 'kleinanzeigen'
+      AND s2.search_url = CASE
+        WHEN sc.search_url LIKE '%anbieter:privat%' THEN '${STRICT_KA_PRIV_URL}'
+        ELSE '${STRICT_KA_ALL_URL}'
+      END
+  );
+
 UPDATE scraper_configs
 SET name = 'Kleinanzeigen Gelsenkirchen (Angebote, 150-850 EUR, ab 20m², ab 1 Zi.)',
     search_url = '${STRICT_KA_ALL_URL}',
     updated_at = NOW()
 WHERE portal = 'kleinanzeigen'
-  AND search_url LIKE '%c203l2093%';
+  AND LOWER(city) = 'gelsenkirchen'
+  AND search_url NOT LIKE '%anbieter:privat%'
+  AND (search_url LIKE '%c203l2093%' OR search_url LIKE '%c203l1004%' OR search_url LIKE '%c203l1001%');
+
+UPDATE scraper_configs
+SET name = 'Kleinanzeigen Gelsenkirchen Privatvermieter (Angebote, 150-850 EUR)',
+    search_url = '${STRICT_KA_PRIV_URL}',
+    updated_at = NOW()
+WHERE portal = 'kleinanzeigen'
+  AND LOWER(city) = 'gelsenkirchen'
+  AND search_url LIKE '%anbieter:privat%'
+  AND (search_url LIKE '%c203l2093%' OR search_url LIKE '%c203l1004%' OR search_url LIKE '%c203l1001%');
 
 UPDATE scraper_configs
 SET name = 'Immowelt Gelsenkirchen (Angebote bis 850 EUR, Neueste, Radius 0)',
@@ -125,7 +168,7 @@ VALUES
     (
         'kleinanzeigen',
         'Gelsenkirchen',
-        'Kleinanzeigen GE-45894 Privatvermieter (Angebote, 150-850 EUR)',
+        'Kleinanzeigen Gelsenkirchen Privatvermieter (Angebote, 150-850 EUR)',
         '${STRICT_KA_PRIV_URL}',
         '*/20 * * * *',
         4000,
@@ -174,8 +217,8 @@ export async function cleanupInvalidListings() {
        OR rooms IS NULL
        OR rooms < 1
        OR LOWER(title) IN ('kleinanzeigen', 'immowelt')
-       OR title ~* '\\m(suche|suchen|gesucht|wohnungssuche|suchend|tausche|wohnungstausch|wg-zimmer|monteurzimmer|stellplatz|garage|gewerbe|ladenlokal)\\M'
-       OR url ~* '(gesucht|wohnungssuche|suche-wohnung|wg-zimmer|stellplatz|garage)'
+       OR title ~* '\\m(suche|suchen|gesucht|wohnungssuche|suchend|tausche|wohnungstausch|wg-zimmer|monteurzimmer|stellplatz|garage|gewerbe|ladenlokal|demenz-?wg|pflege-?wg|senioren-?wg|pflegewohngemeinschaft)\\M'
+       OR url ~* '(gesucht|wohnungssuche|suche-wohnung|wg-zimmer|stellplatz|garage|demenz-wg|pflege-wg|senioren-wg)'
   `);
 
   const countRes = await pool.query(`SELECT COUNT(*)::int AS remaining FROM listings`);

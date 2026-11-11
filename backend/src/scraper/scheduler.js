@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { config } from '../config.js';
 import { pool } from '../db.js';
 import { runDeltaPoll, runReconciler } from './engine.js';
+import { syncKduSourceForCity } from '../services/kduUpdater.js';
 
 const scheduledTasks = [];
 
@@ -59,6 +60,29 @@ export async function reloadSchedules() {
     }
   });
   scheduledTasks.push(reconcileTask);
+
+  // Automatic 24h KdU-URL synchronization per configured city
+  const { rows: kduSources } = await pool.query(
+    `SELECT city, sync_cron FROM kdu_sources WHERE auto_sync_enabled = TRUE AND source_url IS NOT NULL AND source_url <> '' ORDER BY id ASC`
+  );
+
+  for (const src of kduSources) {
+    const expr = src.sync_cron || '0 4 * * *';
+    if (!cron.validate(expr)) {
+      console.warn(`[Scheduler] Ungültiger KdU-Cron "${expr}" für Stadt "${src.city}".`);
+      continue;
+    }
+
+    const kduTask = cron.schedule(expr, async () => {
+      try {
+        const res = await syncKduSourceForCity(src.city);
+        console.log(`[Scheduler] KdU-Sync ${src.city}:`, JSON.stringify(res));
+      } catch (err) {
+        console.error(`[Scheduler] KdU-Sync Fehler (${src.city}):`, err.message);
+      }
+    });
+    scheduledTasks.push(kduTask);
+  }
 
   console.log(`[Scheduler] ${scheduledTasks.length} aktive Cron-Aufgaben geladen.`);
 }

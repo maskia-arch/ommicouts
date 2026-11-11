@@ -32,6 +32,28 @@ VALUES
 ON CONFLICT (city, bg_size) DO NOTHING;
 
 -- ------------------------------------------------------------------------------
+-- 1b. KdU-Quellen & Auto-Sync Konfiguration pro Stadt (24h Update / PLZ-Prefixes)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS kdu_sources (
+    id SERIAL PRIMARY KEY,
+    city VARCHAR(100) UNIQUE NOT NULL,
+    source_url TEXT,
+    zip_prefixes VARCHAR(200),
+    search_max_rent_eur NUMERIC(8, 2) DEFAULT 850.00,
+    auto_sync_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    sync_cron VARCHAR(100) NOT NULL DEFAULT '0 4 * * *',
+    last_synced_at TIMESTAMP,
+    last_sync_status VARCHAR(30),
+    last_sync_message TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO kdu_sources (city, zip_prefixes, search_max_rent_eur, auto_sync_enabled, sync_cron, last_sync_status, last_sync_message)
+VALUES ('Gelsenkirchen', '458', 850.00, FALSE, '0 4 * * *', 'manual', 'Standard-Richtwerte Gelsenkirchen')
+ON CONFLICT (city) DO NOTHING;
+
+-- ------------------------------------------------------------------------------
 -- 2. Wohnungsangebote (Listings)
 -- ------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS listings (
@@ -88,7 +110,7 @@ VALUES
         'kleinanzeigen',
         'Gelsenkirchen',
         'Kleinanzeigen Gelsenkirchen (Angebote, 150-850 EUR, ab 20m², ab 1 Zi.)',
-        'https://www.kleinanzeigen.de/s-wohnung-mieten/gelsenkirchen/anzeige:angebote/preis:150:850/c203l1004+wohnung_mieten.qm_d:20,+wohnung_mieten.zimmer_d:1,0?sortingField=SORTING_DATE',
+        'https://www.kleinanzeigen.de/s-wohnung-mieten/gelsenkirchen/anzeige:angebote/preis:150:850/c203l1000+wohnung_mieten.qm_d:20,+wohnung_mieten.zimmer_d:1,0?sortingField=SORTING_DATE',
         '*/20 * * * *',
         4000,
         15000,
@@ -97,8 +119,8 @@ VALUES
     (
         'kleinanzeigen',
         'Gelsenkirchen',
-        'Kleinanzeigen GE-45894 Privatvermieter (Angebote, 150-850 EUR)',
-        'https://www.kleinanzeigen.de/s-wohnung-mieten/gelsenkirchen/anzeige:angebote/anbieter:privat/preis:150:850/c203l1001+wohnung_mieten.qm_d:20,+wohnung_mieten.zimmer_d:1,0?sortingField=SORTING_DATE',
+        'Kleinanzeigen Gelsenkirchen Privatvermieter (Angebote, 150-850 EUR)',
+        'https://www.kleinanzeigen.de/s-wohnung-mieten/gelsenkirchen/anzeige:angebote/anbieter:privat/preis:150:850/c203l1000+wohnung_mieten.qm_d:20,+wohnung_mieten.zimmer_d:1,0?sortingField=SORTING_DATE',
         '*/20 * * * *',
         4000,
         15000,

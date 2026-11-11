@@ -23,6 +23,18 @@ export function getEngineStatus() {
   return { ...runtimeLocks };
 }
 
+async function getCityZipPrefixes(city) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT zip_prefixes FROM kdu_sources WHERE LOWER(city) = LOWER($1) LIMIT 1`,
+      [city]
+    );
+    return rows[0]?.zip_prefixes || null;
+  } catch {
+    return null;
+  }
+}
+
 async function createLog({ configId = null, runType, portal = null, details = null }) {
   const { rows } = await pool.query(
     `INSERT INTO scraper_logs (config_id, run_type, portal, status, details)
@@ -144,7 +156,8 @@ export async function crawlSingleUrl(
     }
 
     const parsed = parseListingDetail(res.html, res.finalUrl || url, portal, city);
-    const validation = validateListing(parsed, city);
+    const zipPrefixes = await getCityZipPrefixes(city);
+    const validation = validateListing(parsed, city, { zipPrefixes });
 
     if (!validation.valid) {
       const msg = `Skipped: Validation failed [${validation.reason}]`;
@@ -212,6 +225,7 @@ export async function runDeltaPoll({ configId = null } = {}) {
 
       try {
         const rules = await getRulesForCity(targetCity);
+        const zipPrefixes = await getCityZipPrefixes(targetCity);
         let consecutiveKnown = 0;
 
         for (const page of [1, 2]) {
@@ -318,7 +332,7 @@ export async function runDeltaPoll({ configId = null } = {}) {
             if (!parsed) continue;
 
             // Strict Validation Firewall before PostgreSQL insert
-            const validation = validateListing(parsed, targetCity);
+            const validation = validateListing(parsed, targetCity, { zipPrefixes });
             if (!validation.valid) {
               skippedCount++;
               const skipMsg = `Skipped: Validation failed [${validation.reason}]`;

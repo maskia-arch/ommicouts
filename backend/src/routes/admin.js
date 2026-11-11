@@ -14,6 +14,17 @@ import {
   getRulesForCity,
   recalculateAllListings,
 } from '../services/kduMatcher.js';
+import {
+  deriveSearchMaxRentFromRules,
+  fetchAndPreviewKduFromUrl,
+  syncAllAutoKduSources,
+  syncKduSourceForCity,
+  updateCityScraperPriceCaps,
+} from '../services/kduUpdater.js';
+import {
+  generateSearchConfigsForCity,
+  onboardCity,
+} from '../services/cityOnboarding.js';
 
 const router = Router();
 router.use(requireAdminKey);
@@ -178,6 +189,177 @@ router.post('/kdu/recalculate', async (req, res) => {
     const city = req.body?.city ? String(req.body.city).trim() : null;
     const result = await recalculateAllListings(city);
     return res.json({ ok: true, ...result });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ------------------------------------------------------------------------------
+// Multi-City Onboarding & 24h KdU-URL Auto-Sync
+// ------------------------------------------------------------------------------
+router.get('/cities', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        COALESCE(ks.city, kr.city) AS city,
+        ks.source_url,
+        ks.zip_prefixes,
+        ks.search_max_rent_eur,
+        COALESCE(ks.auto_sync_enabled, FALSE) AS auto_sync_enabled,
+        COALESCE(ks.sync_cron, '0 4 * * *') AS sync_cron,
+        ks.last_synced_at,
+        ks.last_sync_status,
+        ks.last_sync_message,
+        COALESCE(kr.rules_count, 0)::int AS rules_count,
+        COALESCE(sc.scrapers_count, 0)::int AS scrapers_count,
+        COALESCE(sc.active_scrapers_count, 0)::int AS active_scrapers_count
+      FROM kdu_sources ks
+      FULL OUTER JOIN (
+        SELECT city, COUNT(*) AS rules_count
+        FROM kdu_rules
+        GROUP BY city
+      ) kr ON LOWER(kr.city) = LOWER(ks.city)
+      LEFT JOIN (
+        SELECT city,
+               COUNT(*) AS scrapers_count,
+               COUNT(*) FILTER (WHERE is_active = TRUE) AS active_scrapers_count
+        FROM scraper_configs
+        GROUP BY city
+      ) sc ON LOWER(sc.city) = LOWER(COALESCE(ks.city, kr.city))
+      ORDER BY COALESCE(ks.city, kr.city) ASC
+    `);
+    return res.json({ cities: rows });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/cities', async (req, res) => {
+  try {
+    const result = await onboardCity(req.body || {});
+    return res.status(201).json(result);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/cities/:city/generate-scrapers', async (req, res) => {
+  try {
+    const cleanCity = String(req.params.city || '').trim();
+    if (!cleanCity) {
+      return res.status(400).json({ error: 'Stadtname fehlt.' });
+    }
+
+    let maxRent = req.body?.search_max_rent_eur ? Number(req.body.search_max_rent_eur) : null;
+    if (!maxRent || !Number.isFinite(maxRent)) {
+      const rules = await getRulesForCity(cleanCity);
+      if (rules.length > 0) {
+        maxRent = deriveSearchMaxRentFromRules(rules);
+      } else {
+        const srcRes = await pool.query(
+          `SELECT search_max_rent_eur FROM kdu_sources WHERE LOWER(city) = LOWER($1)`,
+          [cleanCity]
+        );
+        maxRent = Number(srcRes.rows[0]?.search_max_rent_eur) || 850;
+      }
+    }
+
+    await pool.query(
+      `INSERT INTO kdu_sources (city, search_max_rent_eur, last_sync_status, last_sync_message)
+       VALUES ($1, $2, 'manual', 'Suchaufträge an örtliche KdU angepasst')
+       ON CONFLICT (city) DO UPDATE SET
+         search_max_rent_eur = EXCLUDED.search_max_rent_eur,
+         updated_at = NOW()`,
+      [cleanCity, maxRent]
+    );
+
+    const updatedScrapers = await updateCityScraperPriceCaps(cleanCity, maxRent);
+    const generated = await generateSearchConfigsForCity(cleanCity, maxRent);
+
+    return res.json({
+      ok: true,
+      city: cleanCity,
+      maxRent,
+      updatedScrapers,
+      ...generated,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/kdu/source/:city', async (req, res) => {
+  try {
+    const cleanCity = String(req.params.city || '').trim();
+    if (!cleanCity) {
+      return res.status(400).json({ error: 'Stadtname fehlt.' });
+    }
+
+    const {
+      source_url = null,
+      zip_prefixes = null,
+      search_max_rent_eur = null,
+      auto_sync_enabled = false,
+      sync_cron = '0 4 * * *',
+      update_scrapers = true,
+    } = req.body || {};
+
+    const cleanUrl = source_url ? String(source_url).trim() : null;
+    const cleanPrefixes = zip_prefixes ? String(zip_prefixes).trim() : null;
+    const cap = search_max_rent_eur ? Number(search_max_rent_eur) : null;
+
+    const { rows } = await pool.query(
+      `INSERT INTO kdu_sources (city, source_url, zip_prefixes, search_max_rent_eur, auto_sync_enabled, sync_cron, updated_at)
+       VALUES ($1, $2, $3, COALESCE($4, 850.00), $5, $6, NOW())
+       ON CONFLICT (city) DO UPDATE SET
+         source_url = $2,
+         zip_prefixes = $3,
+         search_max_rent_eur = COALESCE($4, kdu_sources.search_max_rent_eur),
+         auto_sync_enabled = $5,
+         sync_cron = $6,
+         updated_at = NOW()
+       RETURNING *`,
+      [
+        cleanCity,
+        cleanUrl,
+        cleanPrefixes,
+        Number.isFinite(cap) ? cap : null,
+        Boolean(auto_sync_enabled && cleanUrl),
+        String(sync_cron || '0 4 * * *').trim() || '0 4 * * *',
+      ]
+    );
+
+    let scrapersUpdated = 0;
+    if (update_scrapers && Number.isFinite(cap) && cap >= 400) {
+      scrapersUpdated = await updateCityScraperPriceCaps(cleanCity, cap);
+    }
+
+    await reloadSchedules();
+    return res.json({ ok: true, source: rows[0], scrapersUpdated });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/kdu/preview-url', async (req, res) => {
+  try {
+    const { url } = req.body || {};
+    if (!url) {
+      return res.status(400).json({ error: 'Bitte eine URL angeben.' });
+    }
+    const preview = await fetchAndPreviewKduFromUrl(String(url).trim());
+    return res.json(preview);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/kdu/sync', async (req, res) => {
+  try {
+    const city = req.body?.city ? String(req.body.city).trim() : null;
+    const result = city ? await syncKduSourceForCity(city) : await syncAllAutoKduSources();
+    await reloadSchedules();
+    return res.json({ ok: true, result });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

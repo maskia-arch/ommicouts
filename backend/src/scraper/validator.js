@@ -22,30 +22,70 @@ const GE_DISTRICTS = [
   'ueckendorf',
 ];
 
-const OTHER_CITIES_REGEX =
-  /\b(düsseldorf|duesseldorf|essen|bochum|herne|recklinghausen|gladbeck|bottrop|herten|marl|dortmund|duisburg|oberhausen|mülheim|muelheim|witten|hattingen|castrop|waltrop|dorsten|haltern|köln|koeln|wuppertal)\b/i;
+const MAJOR_CITIES = [
+  'düsseldorf',
+  'duesseldorf',
+  'essen',
+  'bochum',
+  'herne',
+  'recklinghausen',
+  'gladbeck',
+  'bottrop',
+  'herten',
+  'marl',
+  'dortmund',
+  'duisburg',
+  'oberhausen',
+  'mülheim',
+  'muelheim',
+  'witten',
+  'hattingen',
+  'castrop',
+  'waltrop',
+  'dorsten',
+  'haltern',
+  'köln',
+  'koeln',
+  'wuppertal',
+  'gelsenkirchen',
+];
 
 export const TITLE_BLACKLIST_REGEX =
-  /\b(suche|suchen|gesucht|wohnungssuche|suchend|wir suchen|ich suche|dringend gesucht|tausche|wohnungstausch|wg-zimmer|wg zimmer|monteurzimmer|stellplatz|garage|gewerbe|ladenlokal)\b/i;
+  /\b(suche|suchen|gesucht|wohnungssuche|suchend|wir suchen|ich suche|dringend gesucht|tausche|wohnungstausch|wg-zimmer|wg zimmer|demenz-?wg|pflege-?wg|senioren-?wg|monteurzimmer|stellplatz|garage|gewerbe|ladenlokal)\b/i;
 
 const DESCRIPTION_WANTED_REGEX =
-  /\b(ich suche|wir suchen|auf der suche nach einer|wohnungssuche|dringend gesucht|wohnungstausch|suche eine \d|suchen eine \d)\b/i;
+  /\b(ich suche|wir suchen|auf der suche nach einer|wohnungssuche|dringend gesucht|wohnungstausch|bewohner gesucht|suche eine \d|suchen eine \d)\b/i;
 
 export function isValidGelsenkirchenZip(zipcode) {
   if (!zipcode) return false;
   return /^458(79|8\d|9\d)$/.test(String(zipcode).trim());
 }
 
+function matchesZipPrefixes(zipcode, zipPrefixesStr) {
+  if (!zipcode || !zipPrefixesStr) return true;
+  const prefixes = String(zipPrefixesStr)
+    .split(/[,;\s]+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (prefixes.length === 0) return true;
+  const z = String(zipcode).trim();
+  return prefixes.some((p) => z.startsWith(p));
+}
+
 /**
  * Hard validation firewall executed before any listing is inserted/updated in PostgreSQL.
- * Returns { valid: true } or { valid: false, reason: string }.
+ * Supports strict Gelsenkirchen geofence and dynamic multi-city geofencing via zipPrefixes.
  */
-export function validateListing(parsed, expectedCity = 'Gelsenkirchen') {
+export function validateListing(
+  parsed,
+  expectedCity = 'Gelsenkirchen',
+  { zipPrefixes = null } = {}
+) {
   if (!parsed || typeof parsed !== 'object') {
     return { valid: false, reason: 'Leeres Listing-Objekt' };
   }
 
-  // 1. Anti-Gesuche-Filter (HTML/JSON Wanted Type + Title/URL Blacklist)
+  // 1. Anti-Gesuche-Filter
   if (parsed.is_wanted) {
     return { valid: false, reason: 'Inseratstyp ist Gesuch (WANTED)' };
   }
@@ -73,11 +113,15 @@ export function validateListing(parsed, expectedCity = 'Gelsenkirchen') {
     return { valid: false, reason: `Gesuch-Formulierung in Beschreibung ("${m?.[0]}")` };
   }
 
-  // 2. Strikter Gelsenkirchen-Geofence (PLZ & Orts-Check)
-  if (String(expectedCity || 'Gelsenkirchen').toLowerCase() === 'gelsenkirchen') {
-    const zip = parsed.zipcode ? String(parsed.zipcode).trim() : '';
-    const localityContext = `${parsed.locality_raw || ''} ${parsed.district || ''} ${title}`.toLowerCase();
+  // 2. City Geofence (strict 45879-45899 for Gelsenkirchen, dynamic for added cities)
+  const targetCity = String(expectedCity || 'Gelsenkirchen').trim();
+  const targetLower = targetCity.toLowerCase();
+  const zip = parsed.zipcode ? String(parsed.zipcode).trim() : '';
+  const localityContext = `${parsed.locality_raw || ''} ${parsed.district || ''} ${title}`.toLowerCase();
+  const competingCities = MAJOR_CITIES.filter((c) => c !== targetLower);
+  const competingRegex = new RegExp(`\\b(${competingCities.join('|')})\\b`, 'i');
 
+  if (targetLower === 'gelsenkirchen') {
     if (zip) {
       if (!isValidGelsenkirchenZip(zip)) {
         return {
@@ -98,8 +142,8 @@ export function validateListing(parsed, expectedCity = 'Gelsenkirchen') {
       }
 
       if (
-        OTHER_CITIES_REGEX.test(parsed.locality_raw || '') ||
-        (OTHER_CITIES_REGEX.test(title) && !localityContext.includes('gelsenkirchen'))
+        competingRegex.test(parsed.locality_raw || '') ||
+        (competingRegex.test(title) && !localityContext.includes('gelsenkirchen'))
       ) {
         return {
           valid: false,
@@ -107,10 +151,35 @@ export function validateListing(parsed, expectedCity = 'Gelsenkirchen') {
         };
       }
     }
+  } else {
+    if (zip && zipPrefixes && !matchesZipPrefixes(zip, zipPrefixes)) {
+      return {
+        valid: false,
+        reason: `PLZ ${zip} passt nicht zu ${targetCity} (erwartet Präfix ${zipPrefixes})`,
+      };
+    }
+
+    if (
+      competingRegex.test(parsed.locality_raw || '') &&
+      !String(parsed.locality_raw || '').toLowerCase().includes(targetLower)
+    ) {
+      return {
+        valid: false,
+        reason: `Fremdstadt statt ${targetCity} im Ort erkannt`,
+      };
+    }
+
+    if (!zip && !localityContext.includes(targetLower)) {
+      return {
+        valid: false,
+        reason: `Kein Ortsbezug zu ${targetCity}`,
+      };
+    }
   }
 
-  // 3. Plausibilitäts-Grenzen (Sanity Checks gegen 1 € VB / 0 Zimmer / < 20 m²)
-  const coldRent = parsed.cold_rent !== null && parsed.cold_rent !== undefined ? Number(parsed.cold_rent) : NaN;
+  // 3. Plausibilitäts-Grenzen (Sanity Checks)
+  const coldRent =
+    parsed.cold_rent !== null && parsed.cold_rent !== undefined ? Number(parsed.cold_rent) : NaN;
   if (!Number.isFinite(coldRent) || coldRent < 150) {
     return {
       valid: false,
