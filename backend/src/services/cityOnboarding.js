@@ -65,6 +65,22 @@ async function resolveImmoweltSearchUrl(citySlug, maxRent) {
   return `${listUrl}?pma=${maxRent}&sd=DESC&sf=TIMESTAMP`;
 }
 
+async function resolveOhneMaklerSearchUrl(citySlug) {
+  const states = ['nordrhein-westfalen', 'niedersachsen', 'hessen', 'bayern', 'baden-wuerttemberg', 'berlin', 'hamburg'];
+  for (const state of states) {
+    const url = `https://www.ohne-makler.net/immobilien/wohnung-mieten/${state}/${citySlug}/`;
+    try {
+      const res = await fetchStealthHtml(url, { preferDesktop: true, timeoutMs: 7000 });
+      if (res.statusCode === 200 && res.html.includes('/immobilie/')) {
+        return url;
+      }
+    } catch {
+      // try next
+    }
+  }
+  return null;
+}
+
 export async function generateSearchConfigsForCity(city, maxRentEur) {
   const cleanCity = String(city || '').trim();
   const slug = toCitySlug(cleanCity);
@@ -72,6 +88,7 @@ export async function generateSearchConfigsForCity(city, maxRentEur) {
 
   const kaLocId = await resolveKleinanzeigenLocationId(cleanCity);
   const iwUrl = await resolveImmoweltSearchUrl(slug, maxRent);
+  const omUrl = await resolveOhneMaklerSearchUrl(slug);
 
   const candidates = [];
   if (kaLocId) {
@@ -80,12 +97,24 @@ export async function generateSearchConfigsForCity(city, maxRentEur) {
       city: cleanCity,
       name: `${cleanCity} Kleinanzeigen (Angebote, 150-${maxRent} EUR, ab 20m², ab 1 Zi.)`,
       search_url: `https://www.kleinanzeigen.de/s-wohnung-mieten/${slug}/anzeige:angebote/preis:150:${maxRent}/c203l${kaLocId}+wohnung_mieten.qm_d:20,+wohnung_mieten.zimmer_d:1,0?sortingField=SORTING_DATE`,
+      cron_expression: '*/20 * * * *',
+      is_active: true,
     });
     candidates.push({
       portal: 'kleinanzeigen',
       city: cleanCity,
       name: `${cleanCity} Kleinanzeigen Privatvermieter (Angebote, 150-${maxRent} EUR)`,
       search_url: `https://www.kleinanzeigen.de/s-wohnung-mieten/${slug}/anzeige:angebote/anbieter:privat/preis:150:${maxRent}/c203l${kaLocId}+wohnung_mieten.qm_d:20,+wohnung_mieten.zimmer_d:1,0?sortingField=SORTING_DATE`,
+      cron_expression: '*/20 * * * *',
+      is_active: true,
+    });
+    candidates.push({
+      portal: 'kleinanzeigen',
+      city: cleanCity,
+      name: `${cleanCity} Kleinanzeigen WBS-Wohnungen (Angebote, 150-${maxRent} EUR)`,
+      search_url: `https://www.kleinanzeigen.de/s-wohnung-mieten/${slug}/anzeige:angebote/preis:150:${maxRent}/wbs/k0c203l${kaLocId}?sortingField=SORTING_DATE`,
+      cron_expression: '*/30 * * * *',
+      is_active: true,
     });
   }
 
@@ -94,20 +123,41 @@ export async function generateSearchConfigsForCity(city, maxRentEur) {
     city: cleanCity,
     name: `${cleanCity} Immowelt (Angebote bis ${maxRent} EUR, Neueste, Radius 0)`,
     search_url: iwUrl,
+    cron_expression: '*/20 * * * *',
+    is_active: true,
+  });
+
+  if (omUrl) {
+    candidates.push({
+      portal: 'other',
+      city: cleanCity,
+      name: `${cleanCity} Ohne-Makler.net (100% Privatvermieter)`,
+      search_url: omUrl,
+      cron_expression: '*/30 * * * *',
+      is_active: true,
+    });
+  }
+
+  candidates.push({
+    portal: 'immoscout',
+    city: cleanCity,
+    name: `${cleanCity} ImmoScout24 (Optional mit Proxy aktivierbar, bis ${maxRent} EUR)`,
+    search_url: `https://www.immobilienscout24.de/Suche/de/nordrhein-westfalen/${slug}/wohnung-mieten?price=-${maxRent}.0&sorting=2`,
+    cron_expression: '*/30 * * * *',
+    is_active: false,
   });
 
   const created = [];
   for (const c of candidates) {
     const { rows } = await pool.query(
       `INSERT INTO scraper_configs (portal, city, name, search_url, cron_expression, jitter_min_ms, jitter_max_ms, is_active)
-       VALUES ($1, $2, $3, $4, '*/20 * * * *', 4000, 15000, TRUE)
+       VALUES ($1, $2, $3, $4, $5, 4000, 15000, $6)
        ON CONFLICT (portal, search_url) DO UPDATE SET
          city = EXCLUDED.city,
          name = EXCLUDED.name,
-         is_active = TRUE,
          updated_at = NOW()
        RETURNING *`,
-      [c.portal, c.city, c.name, c.search_url]
+      [c.portal, c.city, c.name, c.search_url, c.cron_expression || '*/20 * * * *', c.is_active ?? true]
     );
     created.push(rows[0]);
   }

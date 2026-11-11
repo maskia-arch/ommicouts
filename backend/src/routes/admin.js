@@ -656,6 +656,24 @@ router.put('/scraper/configs/:id', async (req, res) => {
   }
 });
 
+router.post('/scraper/configs/toggle-all', async (req, res) => {
+  try {
+    const isActive = Boolean(req.body?.is_active);
+    const city = req.body?.city ? String(req.body.city).trim() : null;
+    const result = city
+      ? await pool.query(
+          `UPDATE scraper_configs SET is_active = $1, updated_at = NOW() WHERE LOWER(city) = LOWER($2)`,
+          [isActive, city]
+        )
+      : await pool.query(`UPDATE scraper_configs SET is_active = $1, updated_at = NOW()`, [isActive]);
+
+    await reloadSchedules();
+    return res.json({ ok: true, is_active: isActive, updatedCount: result.rowCount || 0 });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 router.delete('/scraper/configs/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);

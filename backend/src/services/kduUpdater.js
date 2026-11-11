@@ -200,6 +200,22 @@ export async function updateCityScraperPriceCaps(city, maxRentEur) {
       } catch {
         // ignore invalid URL
       }
+    } else if (cfg.portal === 'immoscout') {
+      try {
+        const u = new URL(nextUrl);
+        u.searchParams.set('price', `-${cap}.0`);
+        nextUrl = u.toString();
+      } catch {
+        // ignore invalid URL
+      }
+    } else if (nextUrl.includes('ggw-gelsenkirchen.de')) {
+      try {
+        const u = new URL(nextUrl);
+        u.searchParams.set('price', String(cap));
+        nextUrl = u.toString();
+      } catch {
+        // ignore invalid URL
+      }
     }
 
     const nextName = cfg.name.replace(/150-\d+\s*EUR/i, `150-${cap} EUR`).replace(/bis\s+\d+\s*EUR/i, `bis ${cap} EUR`);

@@ -232,6 +232,7 @@ export async function runDeltaPoll({ configId = null } = {}) {
           if (stoppedEarly) break;
 
           const pagedUrl = buildPagedSearchUrl(cfg.search_url, page, cfg.portal);
+          if (page > 1 && pagedUrl === cfg.search_url) break;
           const searchRes = await fetchStealthHtml(pagedUrl, {
             proxyUrl: cfg.proxy_url,
             preferDesktop: true,

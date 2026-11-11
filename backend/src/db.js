@@ -22,8 +22,16 @@ const STRICT_KA_ALL_URL =
   'https://www.kleinanzeigen.de/s-wohnung-mieten/gelsenkirchen/anzeige:angebote/preis:150:850/c203l1000+wohnung_mieten.qm_d:20,+wohnung_mieten.zimmer_d:1,0?sortingField=SORTING_DATE';
 const STRICT_KA_PRIV_URL =
   'https://www.kleinanzeigen.de/s-wohnung-mieten/gelsenkirchen/anzeige:angebote/anbieter:privat/preis:150:850/c203l1000+wohnung_mieten.qm_d:20,+wohnung_mieten.zimmer_d:1,0?sortingField=SORTING_DATE';
+const STRICT_KA_WBS_URL =
+  'https://www.kleinanzeigen.de/s-wohnung-mieten/gelsenkirchen/anzeige:angebote/preis:150:850/wbs/k0c203l1000?sortingField=SORTING_DATE';
 const STRICT_IW_URL =
   'https://www.immowelt.de/suche/mieten/wohnung/nordrhein-westfalen/gelsenkirchen-45879/ad08de2278?priceMax=850&distributionTypes=Rent&estateTypes=Apartment&order=DateDesc';
+const OHNE_MAKLER_GE_URL =
+  'https://www.ohne-makler.net/immobilien/wohnung-mieten/nordrhein-westfalen/gelsenkirchen/';
+const GGW_GE_URL =
+  'https://www.ggw-gelsenkirchen.de/mietangebote/?rooms=1&size=20&price=850';
+const IMMOSCOUT_GE_URL =
+  'https://www.immobilienscout24.de/Suche/de/nordrhein-westfalen/gelsenkirchen/wohnung-mieten?price=-850.0&sorting=2';
 
 const INIT_SQL = `
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -176,6 +184,16 @@ VALUES
         TRUE
     ),
     (
+        'kleinanzeigen',
+        'Gelsenkirchen',
+        'Kleinanzeigen Gelsenkirchen WBS-Wohnungen (Angebote, 150-850 EUR)',
+        '${STRICT_KA_WBS_URL}',
+        '*/30 * * * *',
+        4000,
+        15000,
+        TRUE
+    ),
+    (
         'immowelt',
         'Gelsenkirchen',
         'Immowelt Gelsenkirchen (Angebote bis 850 EUR, Neueste, Radius 0)',
@@ -184,6 +202,36 @@ VALUES
         4000,
         15000,
         TRUE
+    ),
+    (
+        'other',
+        'Gelsenkirchen',
+        'Ohne-Makler.net Gelsenkirchen (100% Privatvermieter)',
+        '${OHNE_MAKLER_GE_URL}',
+        '*/30 * * * *',
+        4000,
+        15000,
+        TRUE
+    ),
+    (
+        'other',
+        'Gelsenkirchen',
+        'GGW Gelsenkirchen (Städtische Wohnungen & WBS, ab 20m², bis 850 EUR)',
+        '${GGW_GE_URL}',
+        '0 */2 * * *',
+        4000,
+        15000,
+        TRUE
+    ),
+    (
+        'immoscout',
+        'Gelsenkirchen',
+        'ImmoScout24 Gelsenkirchen (Optional mit Wohn-Proxy aktivierbar, bis 850 EUR)',
+        '${IMMOSCOUT_GE_URL}',
+        '*/30 * * * *',
+        5000,
+        15000,
+        FALSE
     )
 ON CONFLICT (portal, search_url) DO NOTHING;
 

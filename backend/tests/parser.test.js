@@ -165,3 +165,52 @@ test('extractUrlsFromWebhookPayload extracts supported listing links cleanly', (
     'https://www.immowelt.de/expose/abc12345',
   ]);
 });
+
+test('parseListingDetail parses ohne-makler.net private listing accurately', () => {
+  const html = `
+    <html><body>
+      <main>
+        <h1>Helle 3-Zimmer-Wohnung mit Balkon</h1>
+        <div>Ahornstraße 190, 45892 Gelsenkirchen (Resse) 3 Zimmer 67,32 m² Wohnfläche Privatangebot</div>
+        <table>
+          <tr><td>Kaltmiete</td><td>505 € (zzgl. NK)</td></tr>
+          <tr><td>Heizkosten</td><td>145 €</td></tr>
+          <tr><td>Nebenkosten ohne Heizkosten</td><td>155 €</td></tr>
+        </table>
+      </main>
+    </body></html>
+  `;
+  const parsed = parseListingDetail(html, 'https://www.ohne-makler.net/immobilie/5kk5bp/', 'other');
+  assert.equal(parsed.external_id, 'om_5kk5bp');
+  assert.equal(parsed.zipcode, '45892');
+  assert.equal(parsed.district, 'Resse');
+  assert.equal(parsed.cold_rent, 505);
+  assert.equal(parsed.additional_costs, 155);
+  assert.equal(parsed.heating_costs, 145);
+  assert.equal(parsed.sqm, 67.32);
+  assert.equal(parsed.rooms, 3);
+  assert.equal(parsed.is_private_landlord, true);
+});
+
+test('parseListingDetail parses ggw-gelsenkirchen.de and subtracts included heating costs', () => {
+  const html = `
+    <html><body>
+      <main>
+        <h1>Perfekt für Familie mit Kind</h1>
+        <p>Katernberger Straße 32 45883 Gelsenkirchen</p>
+        <div>Netto-Kalt-Miete: 419,34 € Nebenkosten: 360,00 € Heizkosten: 180,00 €(In Nebenkosten enthalten) WBS erforderlich: Nein Wohnfläche: 69,89 m² Anzahl Zimmer: 3.5</div>
+        <div>Dieses Objekt anfragen Werden die WBS Voraussetzungen erfüllt? JaNein</div>
+      </main>
+    </body></html>
+  `;
+  const parsed = parseListingDetail(html, 'https://www.ggw-gelsenkirchen.de/object/450549', 'other');
+  assert.equal(parsed.external_id, 'ggw_450549');
+  assert.equal(parsed.zipcode, '45883');
+  assert.equal(parsed.cold_rent, 419.34);
+  assert.equal(parsed.additional_costs, 180);
+  assert.equal(parsed.heating_costs, 180);
+  assert.equal(parsed.sqm, 69.89);
+  assert.equal(parsed.rooms, 3.5);
+  assert.equal(parsed.wbs_required, false);
+  assert.equal(parsed.is_private_landlord, false);
+});

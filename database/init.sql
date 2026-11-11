@@ -127,6 +127,16 @@ VALUES
         TRUE
     ),
     (
+        'kleinanzeigen',
+        'Gelsenkirchen',
+        'Kleinanzeigen Gelsenkirchen WBS-Wohnungen (Angebote, 150-850 EUR)',
+        'https://www.kleinanzeigen.de/s-wohnung-mieten/gelsenkirchen/anzeige:angebote/preis:150:850/wbs/k0c203l1000?sortingField=SORTING_DATE',
+        '*/30 * * * *',
+        4000,
+        15000,
+        TRUE
+    ),
+    (
         'immowelt',
         'Gelsenkirchen',
         'Immowelt Gelsenkirchen (Angebote bis 850 EUR, Neueste, Radius 0)',
@@ -135,6 +145,36 @@ VALUES
         4000,
         15000,
         TRUE
+    ),
+    (
+        'other',
+        'Gelsenkirchen',
+        'Ohne-Makler.net Gelsenkirchen (100% Privatvermieter)',
+        'https://www.ohne-makler.net/immobilien/wohnung-mieten/nordrhein-westfalen/gelsenkirchen/',
+        '*/30 * * * *',
+        4000,
+        15000,
+        TRUE
+    ),
+    (
+        'other',
+        'Gelsenkirchen',
+        'GGW Gelsenkirchen (Städtische Wohnungen & WBS, ab 20m², bis 850 EUR)',
+        'https://www.ggw-gelsenkirchen.de/mietangebote/?rooms=1&size=20&price=850',
+        '0 */2 * * *',
+        4000,
+        15000,
+        TRUE
+    ),
+    (
+        'immoscout',
+        'Gelsenkirchen',
+        'ImmoScout24 Gelsenkirchen (Optional mit Wohn-Proxy aktivierbar, bis 850 EUR)',
+        'https://www.immobilienscout24.de/Suche/de/nordrhein-westfalen/gelsenkirchen/wohnung-mieten?price=-850.0&sorting=2',
+        '*/30 * * * *',
+        5000,
+        15000,
+        FALSE
     )
 ON CONFLICT (portal, search_url) DO NOTHING;
 

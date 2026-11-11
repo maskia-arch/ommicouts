@@ -121,6 +121,16 @@ export function extractExternalId(url, portal = null) {
     if (match) return `is_${match[1]}`;
   }
 
+  if (cleanUrl.includes('ohne-makler.net')) {
+    const match = cleanUrl.match(/\/immobilie\/([a-z0-9]+)/i);
+    if (match && match[1].toLowerCase() !== 'list') return `om_${match[1]}`;
+  }
+
+  if (cleanUrl.includes('ggw-gelsenkirchen.de')) {
+    const match = cleanUrl.match(/\/object\/(\d+)/i);
+    if (match) return `ggw_${match[1]}`;
+  }
+
   const hash = crypto.createHash('sha1').update(cleanUrl).digest('hex').slice(0, 14);
   const prefix =
     resolvedPortal === 'kleinanzeigen'
@@ -158,6 +168,10 @@ export function buildPagedSearchUrl(baseUrl, page, portal) {
       return u.toString();
     }
 
+    if (u.hostname.includes('ggw-gelsenkirchen.de')) {
+      return baseUrl;
+    }
+
     u.searchParams.set('page', String(page));
     return u.toString();
   } catch {
@@ -174,7 +188,7 @@ export function parseGermanNumber(raw) {
   const str = String(raw).trim();
   if (!str) return null;
 
-  const m = str.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)/);
+  const m = str.match(/(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)/);
   if (!m) return null;
 
   let token = m[1];
@@ -400,6 +414,26 @@ export function extractSearchListingLinks(html, baseUrl, portal, defaultCity = '
     return found;
   }
 
+  if (String(baseUrl || '').includes('ohne-makler.net')) {
+    $('a[href*="/immobilie/"]').each((_, el) => {
+      const href = $(el).attr('href') || '';
+      if (/\/immobilie\/(?!list\b)[a-z0-9]+\/?$/i.test(href)) {
+        pushCandidate(href, { title: $(el).text().trim() });
+      }
+    });
+    return found;
+  }
+
+  if (String(baseUrl || '').includes('ggw-gelsenkirchen.de')) {
+    $('a[href*="/object/"]').each((_, el) => {
+      const href = $(el).attr('href') || '';
+      if (/\/object\/\d+\/?/i.test(href)) {
+        pushCandidate(href, { title: $(el).text().trim() });
+      }
+    });
+    return found;
+  }
+
   // Other portals: JSON-LD + __NEXT_DATA__ + DOM
   for (const ld of collectJsonLd($)) {
     if (ld.url) pushCandidate(ld.url, { title: ld.name });
@@ -457,7 +491,7 @@ export function detectWbsRequired(text) {
   const lower = String(text).toLowerCase();
   if (!/\bwbs\b|wohnberechtigungsschein/.test(lower)) return false;
   if (
-    /(?:kein|ohne|nicht\s+erforderlich|nicht\s+nötig|nicht\s+benötigt)[^.\n]{0,25}(?:wbs|wohnberechtigungsschein)|(?:wbs|wohnberechtigungsschein)[^.\n]{0,25}(?:nicht\s+erforderlich|nicht\s+nötig|entfällt|nicht\s+benötigt)/.test(
+    /(?:kein|ohne|nicht\s+erforderlich|nicht\s+nötig|nicht\s+benötigt)[^.\n]{0,25}(?:wbs|wohnberechtigungsschein)|(?:wbs|wohnberechtigungsschein)[^.\n]{0,25}(?:nicht\s+erforderlich|nicht\s+nötig|entfällt|nicht\s+benötigt|erforderlich\s*[:\-]?\s*nein)/.test(
       lower
     )
   ) {
@@ -605,6 +639,8 @@ export function parseListingDetail(html, url, portal = null, defaultCity = 'Gels
   let descriptionText = '';
   let isWanted = false;
 
+  let wbsExplicit = null;
+
   // 1. Portal-specific DOM extraction FIRST (especially for Kleinanzeigen where WebSite JSON-LD had "Kleinanzeigen")
   if (resolvedPortal === 'kleinanzeigen') {
     title =
@@ -651,6 +687,78 @@ export function parseListingDetail(html, url, portal = null, defaultCity = 'Gels
     }
     const descDom = $('#viewad-description-text').text().replace(/\s+/g, ' ').trim();
     if (descDom) descriptionText += ` ${descDom}`;
+  } else if (cleanUrl.includes('ohne-makler.net')) {
+    title = $('h1').first().text().replace(/\s+/g, ' ').trim();
+    sellerTypeRaw = 'private';
+    sellerName = 'Privatangebot';
+
+    const mainText = $('main, article, body').first().text().replace(/\s+/g, ' ').trim();
+    const locMatch = mainText.match(/\b(\d{5})\s+([A-Za-zÄÖÜäöüß\-]+(?:\s*\([^)]+\))?)/);
+    if (locMatch) {
+      localityRaw = locMatch[0];
+      zipcode = locMatch[1];
+      district = detectDistrict(locMatch[0], defaultCity);
+    }
+
+    $('table tr').each((_, tr) => {
+      const rowText = $(tr).text().replace(/\s+/g, ' ').trim();
+      const lower = rowText.toLowerCase();
+      if (lower.startsWith('kaltmiete') && coldRent === null) {
+        coldRent = parseGermanNumber(rowText);
+      } else if (lower.includes('nebenkosten ohne heizkosten') && additionalCosts === null) {
+        additionalCosts = parseGermanNumber(rowText);
+      } else if (lower.startsWith('heizkosten') && heatingCosts === null) {
+        heatingCosts = parseGermanNumber(rowText);
+      } else if (lower.includes('wohnfläche') && sqm === null) {
+        sqm = parseGermanNumber(rowText);
+      } else if ((lower.startsWith('zimmer') || lower.includes('anzahl zimmer')) && rooms === null) {
+        rooms = parseGermanNumber(rowText);
+      }
+    });
+
+    const sqmSummary = mainText.match(/(\d{2,3}(?:[.,]\d{1,2})?)\s*m²\s*Wohnfläche/i);
+    if (sqm === null && sqmSummary) sqm = parseGermanNumber(sqmSummary[1]);
+    const roomsSummary = mainText.match(/(\d{1,2}(?:[.,]\d)?)\s*Zimmer\b/i);
+    if (rooms === null && roomsSummary) rooms = parseGermanNumber(roomsSummary[1]);
+    descriptionText = mainText.slice(0, 5000);
+  } else if (cleanUrl.includes('ggw-gelsenkirchen.de')) {
+    title = $('h1').first().text().replace(/\s+/g, ' ').trim();
+    sellerTypeRaw = 'commercial';
+    sellerName = 'GGW Gelsenkirchen';
+
+    const mainText = $('main, body').first().text().replace(/\s+/g, ' ').trim();
+    const locMatch = mainText.match(/\b(458\d{2})\s+Gelsenkirchen/i);
+    if (locMatch) {
+      localityRaw = locMatch[0];
+      zipcode = locMatch[1];
+      district = detectDistrict(mainText.slice(0, 1800), defaultCity);
+    }
+
+    const kaltM = mainText.match(/Netto-Kalt-Miete:\s*([\d.,]+)\s*€/i);
+    if (kaltM) coldRent = parseGermanNumber(kaltM[1]);
+
+    const nkM = mainText.match(/Nebenkosten:\s*([\d.,]+)\s*€/i);
+    const hkM = mainText.match(/Heizkosten:\s*([\d.,]+)\s*€\s*(\(In Nebenkosten enthalten\))?/i);
+    const totalNk = nkM ? parseGermanNumber(nkM[1]) : 0;
+    const hkVal = hkM ? parseGermanNumber(hkM[1]) : 0;
+    heatingCosts = hkVal ?? 0;
+    if (hkM?.[2] && totalNk !== null && hkVal !== null && totalNk >= hkVal) {
+      additionalCosts = Math.round((totalNk - hkVal) * 100) / 100;
+    } else {
+      additionalCosts = totalNk ?? 0;
+    }
+
+    const sqmM = mainText.match(/Wohnfläche:\s*([\d.,]+)\s*m²/i);
+    if (sqmM) sqm = parseGermanNumber(sqmM[1]);
+
+    const roomsM = mainText.match(/Anzahl\s+Zimmer:\s*([\d.,]+)/i);
+    if (roomsM) rooms = parseGermanNumber(roomsM[1]);
+
+    const wbsM = mainText.match(/WBS\s+erforderlich:\s*(Ja|Nein)/i);
+    if (wbsM) wbsExplicit = wbsM[1].toLowerCase() === 'ja';
+
+    // Trim contact form suffix ("Dieses Objekt anfragen...") so inquiry checkboxes don't pollute heuristics
+    descriptionText = mainText.split(/Dieses Objekt anfragen/i)[0].slice(0, 5000);
   }
 
   // 2. Valid Listing JSON-LD extraction (ignores WebSite / BreadcrumbList / ImageObject)
@@ -763,7 +871,7 @@ export function parseListingDetail(html, url, portal = null, defaultCity = 'Gels
     portal: resolvedPortal,
   });
 
-  const wbsRequired = detectWbsRequired(fullText);
+  const wbsRequired = wbsExplicit !== null ? wbsExplicit : detectWbsRequired(fullText);
 
   return {
     external_id: externalId,
@@ -801,6 +909,12 @@ export function isListingOfflineHtml(html, finalUrl, statusCode, portal) {
   }
   if (portal === 'immowelt' && (lowerUrl.includes('/liste/') || lowerUrl.includes('/suche/')) && !lowerUrl.includes('/expose/')) {
     return { offline: true, reason: 'Redirect zur Immowelt-Liste' };
+  }
+  if (lowerUrl.includes('ohne-makler.net/immobilien/') && !lowerUrl.includes('/immobilie/')) {
+    return { offline: true, reason: 'Redirect zur Ohne-Makler-Liste' };
+  }
+  if (lowerUrl.includes('ggw-gelsenkirchen.de/mietangebote')) {
+    return { offline: true, reason: 'Redirect zur GGW-Übersicht' };
   }
 
   const lowerHtml = String(html || '').toLowerCase();
@@ -849,7 +963,9 @@ export function extractUrlsFromWebhookPayload(payload) {
     const isSupportedListing =
       (lower.includes('kleinanzeigen.de') && lower.includes('/s-anzeige/')) ||
       (lower.includes('immowelt.de') && lower.includes('/expose/')) ||
-      (lower.includes('immobilienscout24.de') && lower.includes('/expose/'));
+      (lower.includes('immobilienscout24.de') && lower.includes('/expose/')) ||
+      (lower.includes('ohne-makler.net') && /\/immobilie\/(?!list\b)[a-z0-9]+/i.test(lower)) ||
+      (lower.includes('ggw-gelsenkirchen.de') && /\/object\/\d+/i.test(lower));
 
     if (isSupportedListing) {
       cleaned.add(normalizeListingUrl(trimmed));
