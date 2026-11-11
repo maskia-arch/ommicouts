@@ -123,13 +123,13 @@ async function insertNotificationForWatchers(client, listing, event) {
          user_id, listing_id, event_type, title, message,
          listing_title_snapshot, listing_url_snapshot, metadata
        )
-       SELECT $1, $2, $3, $4, $5, $6, $7, $8::jsonb
+       SELECT $1::uuid, $2::uuid, $3::varchar, $4::varchar, $5::text, $6::text, $7::text, $8::jsonb
        WHERE NOT EXISTS (
          SELECT 1 FROM user_notifications
-         WHERE user_id = $1
-           AND listing_id = $2
-           AND event_type = $3
-           AND message = $5
+         WHERE user_id = $1::uuid
+           AND listing_id = $2::uuid
+           AND event_type = $3::varchar
+           AND message = $5::text
            AND created_at > NOW() - INTERVAL '60 minutes'
        )`,
       [
