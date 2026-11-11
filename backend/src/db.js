@@ -394,6 +394,23 @@ CREATE TABLE IF NOT EXISTS user_hidden_listings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_hidden_user ON user_hidden_listings (user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS user_notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    listing_id UUID REFERENCES listings(id) ON DELETE SET NULL,
+    event_type VARCHAR(50) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    listing_title_snapshot TEXT,
+    listing_url_snapshot TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    read_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_notifications_user_unread ON user_notifications (user_id, is_read, created_at DESC);
 `;
 
 export async function cleanupInvalidListings() {

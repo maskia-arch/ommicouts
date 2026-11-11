@@ -9,6 +9,7 @@ import {
   findCrossPortalDuplicate,
   mergeUserReferencesAndMarkOffline,
 } from '../services/deduplicator.js';
+import { notifyWatchersListingChanged } from '../services/notifications.js';
 import {
   buildPagedSearchUrl,
   detectPortal,
@@ -97,6 +98,12 @@ async function upsertParsedListing(parsed, rules) {
 
   const calculatedBruttokalt = computeBruttokalt(parsed.cold_rent, parsed.additional_costs);
   const matchedMinBgSize = findMatchedMinBgSize(calculatedBruttokalt, rules);
+
+  const { rows: beforeRows } = await pool.query(
+    `SELECT * FROM listings WHERE external_id = $1 LIMIT 1`,
+    [parsed.external_id]
+  );
+  const beforeListing = beforeRows[0] || null;
 
   const dup = await findCrossPortalDuplicate(parsed);
   if (dup.duplicate && !dup.incomingWon) {
@@ -196,6 +203,9 @@ async function upsertParsedListing(parsed, rules) {
   );
 
   const savedWinner = rows[0];
+  if (beforeListing) {
+    await notifyWatchersListingChanged({ before: beforeListing, after: savedWinner });
+  }
   if (dup.duplicate && dup.incomingWon && dup.existing) {
     await mergeUserReferencesAndMarkOffline(savedWinner, dup.existing, rules);
     console.log(
@@ -542,7 +552,7 @@ export async function runReconciler({ batchLimit = 60 } = {}) {
 
   try {
     const { rows: activeListings } = await pool.query(
-      `SELECT id, external_id, portal, url
+      `SELECT *
        FROM listings
        WHERE status = 'active'
        ORDER BY last_seen_at ASC
@@ -562,10 +572,13 @@ export async function runReconciler({ batchLimit = 60 } = {}) {
         );
 
         if (offlineCheck.offline) {
-          await pool.query(
-            `UPDATE listings SET status = 'offline', last_seen_at = NOW() WHERE id = $1`,
+          const { rows: offRows } = await pool.query(
+            `UPDATE listings SET status = 'offline', last_seen_at = NOW() WHERE id = $1 RETURNING *`,
             [item.id]
           );
+          if (offRows[0]) {
+            await notifyWatchersListingChanged({ before: item, after: offRows[0] });
+          }
           offlineCount++;
         } else if (res.statusCode >= 200 && res.statusCode < 400) {
           const parsedContact = parseListingDetail(

@@ -3,10 +3,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle,
+  Bell,
   BookmarkPlus,
   Building2,
   CheckCircle2,
   ExternalLink,
+  Eye,
   EyeOff,
   FileText,
   Filter,
@@ -23,6 +25,7 @@ import {
   Phone,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   ShieldCheck,
   Sparkles,
@@ -30,6 +33,7 @@ import {
   User,
   UserCheck,
   Users,
+  X,
 } from 'lucide-react';
 import type {
   ApplicationStatus,
@@ -38,6 +42,7 @@ import type {
   ListingItem,
   ListingsResponse,
   UserApplication,
+  UserNotification,
   UserProfile,
 } from '@/types/immo';
 import { ApplicationModal } from './ApplicationModal';
@@ -110,8 +115,14 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
   const [authLoaded, setAuthLoaded] = useState<boolean>(false);
   const [applications, setApplications] = useState<UserApplication[]>([]);
   const [hiddenListings, setHiddenListings] = useState<HiddenListingItem[]>([]);
+  const [notifications, setNotifications] = useState<UserNotification[]>([]);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState<number>(0);
   const [reportingListing, setReportingListing] = useState<ListingItem | null>(null);
   const [openOrgSignal, setOpenOrgSignal] = useState<number>(0);
+  const [openInboxSignal, setOpenInboxSignal] = useState<number>(0);
+  const [hideToast, setHideToast] = useState<{ listingId: string; title: string } | null>(null);
+  const [hiddenModalOpen, setHiddenModalOpen] = useState<boolean>(false);
+  const [unhidingId, setUnhidingId] = useState<string | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
   const [activeView, setActiveView] = useState<'search' | 'account' | 'org'>('search');
@@ -150,6 +161,26 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
     }
   }, []);
 
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const res = await fetch('/api/me/notifications', {
+        cache: 'no-store',
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        setNotifications([]);
+        setUnreadNotificationsCount(0);
+        return;
+      }
+      const json = await res.json();
+      setNotifications(Array.isArray(json.notifications) ? json.notifications : []);
+      setUnreadNotificationsCount(Number(json.unread_count ?? 0));
+    } catch {
+      setNotifications([]);
+      setUnreadNotificationsCount(0);
+    }
+  }, []);
+
   const loadSession = useCallback(async () => {
     try {
       const res = await fetch('/api/auth/me', {
@@ -159,20 +190,24 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
       const json = await res.json();
       if (json?.authenticated && json.user) {
         setUser(json.user);
-        await Promise.all([fetchApplications(), fetchHiddenListings()]);
+        await Promise.all([fetchApplications(), fetchHiddenListings(), fetchNotifications()]);
       } else {
         setUser(null);
         setApplications([]);
         setHiddenListings([]);
+        setNotifications([]);
+        setUnreadNotificationsCount(0);
       }
     } catch {
       setUser(null);
       setApplications([]);
       setHiddenListings([]);
+      setNotifications([]);
+      setUnreadNotificationsCount(0);
     } finally {
       setAuthLoaded(true);
     }
-  }, [fetchApplications, fetchHiddenListings]);
+  }, [fetchApplications, fetchHiddenListings, fetchNotifications]);
 
   useEffect(() => {
     loadSession();
@@ -186,7 +221,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
     if (loggedInUser.bg_size) setBgSize(loggedInUser.bg_size);
     if (loggedInUser.benefit_type) setBenefitType(loggedInUser.benefit_type);
     setAuthModalOpen(false);
-    await Promise.all([fetchApplications(), fetchHiddenListings()]);
+    await Promise.all([fetchApplications(), fetchHiddenListings(), fetchNotifications()]);
   };
 
   const handleLogout = async () => {
@@ -198,6 +233,10 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
     setUser(null);
     setApplications([]);
     setHiddenListings([]);
+    setNotifications([]);
+    setUnreadNotificationsCount(0);
+    setHideToast(null);
+    setHiddenModalOpen(false);
     setActiveView('search');
   };
 
@@ -270,12 +309,56 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
               }
             : prev
         );
+        setHideToast({ listingId: item.id, title: item.title });
         await fetchHiddenListings();
       }
     } catch {
       // ignore transient error
     } finally {
       setUpdatingListingId(null);
+    }
+  };
+
+  const unhideListing = async (listingId: string) => {
+    if (!user) return;
+    setUnhidingId(listingId);
+    try {
+      const res = await fetch(`/api/me/hidden-listings/${listingId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (res.ok) {
+        if (hideToast?.listingId === listingId) {
+          setHideToast(null);
+        }
+        await Promise.all([fetchHiddenListings(), fetchListings()]);
+      }
+    } catch {
+      // ignore transient error
+    } finally {
+      setUnhidingId(null);
+    }
+  };
+
+  const unhideAllListings = async () => {
+    if (!user || hiddenListings.length === 0) return;
+    setUnhidingId('__all__');
+    try {
+      await Promise.all(
+        hiddenListings.map((h) =>
+          fetch(`/api/me/hidden-listings/${h.listing_id}`, {
+            method: 'DELETE',
+            credentials: 'include',
+          })
+        )
+      );
+      setHideToast(null);
+      setHiddenModalOpen(false);
+      await Promise.all([fetchHiddenListings(), fetchListings()]);
+    } catch {
+      // ignore
+    } finally {
+      setUnhidingId(null);
     }
   };
 
@@ -390,6 +473,27 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                 >
                   <User className="h-3.5 w-3.5" />
                   Mein Bereich ({applications.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveView('account');
+                    setOpenInboxSignal((n) => n + 1);
+                  }}
+                  title="News-Inbox öffnen"
+                  className={`relative inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition ${
+                    unreadNotificationsCount > 0
+                      ? 'border border-sky-500/50 bg-sky-500/15 text-sky-200 hover:bg-sky-500/25'
+                      : 'border border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800'
+                  }`}
+                >
+                  <Bell className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Inbox</span>
+                  {unreadNotificationsCount > 0 && (
+                    <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
+                      {unreadNotificationsCount}
+                    </span>
+                  )}
                 </button>
                 {user.account_type === 'organization' && (
                   <button
@@ -506,15 +610,19 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
             cities={cities}
             applications={applications}
             hiddenListings={hiddenListings}
+            notifications={notifications}
+            unreadNotificationsCount={unreadNotificationsCount}
             onUserUpdated={(updated) => setUser(updated)}
             onApplicationsChanged={fetchApplications}
             onHiddenListingsChanged={() => {
               fetchHiddenListings();
               fetchListings();
             }}
+            onNotificationsChanged={fetchNotifications}
             onBackToSearch={() => setActiveView('search')}
             onGoToOrgList={() => setActiveView('org')}
             openOrgSignal={openOrgSignal}
+            openInboxSignal={openInboxSignal}
           />
         ) : (
           <>
@@ -868,6 +976,64 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
             </select>
           </div>
         </section>
+
+        {/* Sichtbarer Hinweis & Rückgängig-Funktion für ausgeblendete Wohnungen */}
+        {user && (hideToast || hiddenListings.length > 0) && (
+          <div className="space-y-2">
+            {hideToast && (
+              <div className="flex flex-col justify-between gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-100 sm:flex-row sm:items-center">
+                <div className="flex items-center gap-2">
+                  <EyeOff className="h-4 w-4 shrink-0 text-amber-300" />
+                  <span>
+                    Anzeige <strong className="text-white">„{hideToast.title}“</strong> wurde aus deiner Übersicht ausgeblendet.
+                  </span>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={unhidingId === hideToast.listingId}
+                    onClick={() => unhideListing(hideToast.listingId)}
+                    className="inline-flex items-center gap-1 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-slate-950 transition hover:bg-amber-400 disabled:opacity-50"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Rückgängig machen
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setHideToast(null)}
+                    aria-label="Hinweis schließen"
+                    className="rounded-lg p-1 text-amber-200/80 hover:bg-amber-500/20 hover:text-white"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {hiddenListings.length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-2.5 text-xs text-slate-300">
+                <div className="flex items-center gap-2">
+                  <EyeOff className="h-3.5 w-3.5 text-slate-400" />
+                  <span>
+                    <strong className="text-white">{hiddenListings.length}</strong>{' '}
+                    {hiddenListings.length === 1
+                      ? 'Wohnung ist aktuell von dir ausgeblendet'
+                      : 'Wohnungen sind aktuell von dir ausgeblendet'}
+                    .
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setHiddenModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1 text-xs font-semibold text-emerald-300 transition hover:border-emerald-500/40 hover:bg-slate-700"
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                  Ausgeblendete verwalten / wieder einblenden
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Error */}
         {error && (
@@ -1284,10 +1450,113 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                     }
                   : prev
               );
+              setHideToast({ listingId, title: reportingListing.title });
               fetchHiddenListings();
             }
           }}
         />
+      )}
+
+      {hiddenModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+          <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
+              <div className="flex items-center gap-2">
+                <EyeOff className="h-5 w-5 text-amber-400" />
+                <div>
+                  <h2 className="text-base font-bold text-white">
+                    Ausgeblendete Wohnungen ({hiddenListings.length})
+                  </h2>
+                  <p className="text-xs text-slate-400">
+                    Hier kannst du jederzeit einzelne oder alle ausgeblendeten Inserate wieder sichtbar machen.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHiddenModalOpen(false)}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 space-y-2.5 overflow-y-auto p-5">
+              {hiddenListings.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-800 p-6 text-center text-xs text-slate-400">
+                  Aktuell sind keine Wohnungen ausgeblendet.
+                </div>
+              ) : (
+                hiddenListings.map((h) => (
+                  <div
+                    key={h.id}
+                    className="flex flex-col justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3.5 sm:flex-row sm:items-center"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-bold text-white">{h.title}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                        <span>
+                          {h.zipcode ? `${h.zipcode} ` : ''}
+                          {h.city}
+                          {h.district ? ` · ${h.district}` : ''}
+                        </span>
+                        <span>·</span>
+                        <span className="font-semibold text-emerald-300">
+                          {formatEur(h.calculated_bruttokalt)}
+                        </span>
+                        {h.sqm && <span>· {h.sqm} m²</span>}
+                        {h.rooms && <span>· {h.rooms} Zi.</span>}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <a
+                        href={h.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700"
+                      >
+                        Inserat
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                      <button
+                        type="button"
+                        disabled={unhidingId === h.listing_id || unhidingId === '__all__'}
+                        onClick={() => unhideListing(h.listing_id)}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-50"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        Wieder einblenden
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 px-5 py-3.5">
+              {hiddenListings.length > 1 ? (
+                <button
+                  type="button"
+                  disabled={unhidingId === '__all__'}
+                  onClick={unhideAllListings}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3.5 py-2 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/20 disabled:opacity-50"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Alle {hiddenListings.length} wieder einblenden
+                </button>
+              ) : (
+                <span />
+              )}
+              <button
+                type="button"
+                onClick={() => setHiddenModalOpen(false)}
+                className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+              >
+                Schließen
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

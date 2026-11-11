@@ -3,10 +3,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Bell,
   Building2,
+  CheckCheck,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Clock,
   ExternalLink,
   Eye,
   EyeOff,
@@ -28,6 +31,7 @@ import type {
   PortalKey,
   PortalLinkMap,
   UserApplication,
+  UserNotification,
   UserProfile,
 } from '@/types/immo';
 
@@ -36,12 +40,16 @@ interface UserAreaViewProps {
   cities: string[];
   applications: UserApplication[];
   hiddenListings: HiddenListingItem[];
+  notifications: UserNotification[];
+  unreadNotificationsCount: number;
   onUserUpdated: (user: UserProfile) => void;
   onApplicationsChanged: () => void;
   onHiddenListingsChanged: () => void;
+  onNotificationsChanged: () => void;
   onBackToSearch: () => void;
   onGoToOrgList?: () => void;
   openOrgSignal?: number;
+  openInboxSignal?: number;
 }
 
 const PORTAL_CATALOG: Array<{
@@ -120,12 +128,16 @@ export function UserAreaView({
   cities,
   applications,
   hiddenListings,
+  notifications,
+  unreadNotificationsCount,
   onUserUpdated,
   onApplicationsChanged,
   onHiddenListingsChanged,
+  onNotificationsChanged,
   onBackToSearch,
   onGoToOrgList,
   openOrgSignal = 0,
+  openInboxSignal = 0,
 }: UserAreaViewProps) {
   const [fullName, setFullName] = useState(user.full_name || '');
   const [phone, setPhone] = useState(user.phone || '');
@@ -186,6 +198,68 @@ export function UserAreaView({
       }, 60);
     }
   }, [openOrgSignal]);
+
+  // News-Inbox
+  const inboxSectionRef = useRef<HTMLElement | null>(null);
+  const [inboxFilter, setInboxFilter] = useState<'all' | 'unread'>('all');
+  const [busyInboxAction, setBusyInboxAction] = useState(false);
+
+  useEffect(() => {
+    if (openInboxSignal > 0) {
+      setTimeout(() => {
+        inboxSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 60);
+    }
+  }, [openInboxSignal]);
+
+  const filteredNotifications = useMemo(() => {
+    if (inboxFilter === 'unread') {
+      return notifications.filter((n) => !n.is_read);
+    }
+    return notifications;
+  }, [notifications, inboxFilter]);
+
+  const handleMarkNotificationRead = async (notificationId: string) => {
+    try {
+      const res = await fetch(`/api/me/notifications/${notificationId}/read`, {
+        method: 'PATCH',
+        credentials: 'include',
+      });
+      if (res.ok) onNotificationsChanged();
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    setBusyInboxAction(true);
+    try {
+      const res = await fetch('/api/me/notifications/read-all', {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (res.ok) {
+        onNotificationsChanged();
+        setFeedback({ type: 'ok', text: 'Alle Benachrichtigungen wurden als gelesen markiert.' });
+      }
+    } catch {
+      // ignore
+    } finally {
+      setBusyInboxAction(false);
+    }
+  };
+
+  const handleDeleteNotification = async (notificationId: string) => {
+    try {
+      const res = await fetch(`/api/me/notifications/${notificationId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (res.ok) onNotificationsChanged();
+    } catch {
+      // ignore
+    }
+  };
 
   const statusCounts = useMemo(() => {
     const counts: Record<'all' | ApplicationStatus, number> = {
@@ -468,6 +542,169 @@ export function UserAreaView({
           {feedback.text}
         </div>
       )}
+
+      {/* News-Inbox für Änderungen an gemerkten Wohnungen */}
+      <section
+        ref={inboxSectionRef}
+        className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 sm:p-5"
+      >
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="flex items-center gap-2 text-base font-bold text-white">
+              <Bell className="h-4 w-4 text-sky-400" />
+              News-Inbox
+              {unreadNotificationsCount > 0 && (
+                <span className="rounded-full bg-rose-500 px-2 py-0.5 text-[11px] font-bold text-white">
+                  {unreadNotificationsCount} neu
+                </span>
+              )}
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-400">
+              Automatische Meldungen, sobald sich eines deiner gemerkten Inserate im Preis verändert, offline geht oder entfernt wird.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex rounded-xl border border-slate-800 bg-slate-950 p-0.5 text-xs">
+              <button
+                type="button"
+                onClick={() => setInboxFilter('all')}
+                className={`rounded-lg px-2.5 py-1 font-medium transition ${
+                  inboxFilter === 'all' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Alle ({notifications.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setInboxFilter('unread')}
+                className={`rounded-lg px-2.5 py-1 font-medium transition ${
+                  inboxFilter === 'unread' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Ungelesen ({unreadNotificationsCount})
+              </button>
+            </div>
+
+            {unreadNotificationsCount > 0 && (
+              <button
+                type="button"
+                onClick={handleMarkAllNotificationsRead}
+                disabled={busyInboxAction}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-xs font-semibold text-sky-200 transition hover:bg-sky-500/20 disabled:opacity-60"
+              >
+                <CheckCheck className="h-3.5 w-3.5" />
+                Alle als gelesen markieren
+              </button>
+            )}
+          </div>
+        </div>
+
+        {filteredNotifications.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-800 bg-slate-950/50 p-4 text-center text-xs text-slate-400">
+            {inboxFilter === 'unread'
+              ? 'Keine ungelesenen Benachrichtigungen vorhanden.'
+              : 'Noch keine Meldungen vorhanden. Sobald sich ein gemerktes Inserat ändert (z. B. Miete, Status oder Löschung), erscheint hier automatisch eine Nachricht.'}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {filteredNotifications.map((notif) => {
+              const isDanger =
+                notif.event_type === 'listing_deleted' ||
+                notif.event_type === 'listing_offline' ||
+                notif.event_type === 'listing_hidden';
+              const isPrice = notif.event_type === 'price_changed';
+              const targetUrl = notif.current_listing_url || notif.listing_url_snapshot;
+              return (
+                <div
+                  key={notif.id}
+                  className={`flex flex-col justify-between gap-3 rounded-xl border p-3.5 transition sm:flex-row sm:items-start ${
+                    notif.is_read
+                      ? 'border-slate-800 bg-slate-950/50 opacity-85'
+                      : isDanger
+                        ? 'border-rose-500/40 bg-rose-950/20'
+                        : isPrice
+                          ? 'border-amber-500/40 bg-amber-950/20'
+                          : 'border-sky-500/40 bg-sky-950/20'
+                  }`}
+                >
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {!notif.is_read && (
+                        <span className="h-2 w-2 shrink-0 rounded-full bg-sky-400" title="Ungelesen" />
+                      )}
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                          isDanger
+                            ? 'bg-rose-500/20 text-rose-300'
+                            : isPrice
+                              ? 'bg-amber-500/20 text-amber-300'
+                              : 'bg-sky-500/20 text-sky-300'
+                        }`}
+                      >
+                        {isDanger
+                          ? 'Status / Entfernt'
+                          : isPrice
+                            ? 'Preisänderung'
+                            : 'Objekt-Update'}
+                      </span>
+                      <span className="text-xs font-bold text-white">{notif.title}</span>
+                      <span className="inline-flex items-center gap-1 text-[11px] text-slate-500">
+                        <Clock className="h-3 w-3" />
+                        {new Date(notif.created_at).toLocaleString('de-DE', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                    </div>
+                    <p className="text-xs leading-relaxed text-slate-300">{notif.message}</p>
+                    {notif.listing_title_snapshot && (
+                      <div className="text-[11px] text-slate-400">
+                        Inserat: <span className="text-slate-200">{notif.listing_title_snapshot}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                    {targetUrl && notif.current_listing_status !== 'deleted' && notif.event_type !== 'listing_deleted' && (
+                      <a
+                        href={targetUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-[11px] font-medium text-slate-200 hover:bg-slate-700"
+                      >
+                        Inserat
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
+                    {!notif.is_read && (
+                      <button
+                        type="button"
+                        onClick={() => handleMarkNotificationRead(notif.id)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/20"
+                      >
+                        <CheckCircle2 className="h-3 w-3" />
+                        Als gelesen
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteNotification(notif.id)}
+                      title="Nachricht entfernen"
+                      className="rounded-lg border border-slate-800 bg-slate-900 p-1.5 text-slate-400 hover:border-rose-500/40 hover:text-rose-300"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       {/* Portal-Verknüpfungsstatus */}
       <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 sm:p-5">

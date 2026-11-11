@@ -182,3 +182,29 @@ export interface ListingsResponse {
   districts: string[];
   items: ListingItem[];
 }
+
+export type NotificationEventType =
+  | 'price_changed'
+  | 'listing_offline'
+  | 'listing_hidden'
+  | 'listing_deleted'
+  | 'listing_updated'
+  | 'system';
+
+export interface UserNotification {
+  id: string;
+  user_id: string;
+  listing_id: string | null;
+  event_type: NotificationEventType;
+  title: string;
+  message: string;
+  listing_title_snapshot: string | null;
+  listing_url_snapshot: string | null;
+  current_listing_status?: string | null;
+  current_listing_url?: string | null;
+  current_listing_title?: string | null;
+  metadata: Record<string, unknown>;
+  is_read: boolean;
+  read_at: string | null;
+  created_at: string;
+}

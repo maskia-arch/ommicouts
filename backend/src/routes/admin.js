@@ -9,6 +9,10 @@ import {
 } from '../scraper/engine.js';
 import { reloadSchedules } from '../scraper/scheduler.js';
 import {
+  notifyWatchersListingChanged,
+  notifyWatchersListingDeleted,
+} from '../services/notifications.js';
+import {
   computeBruttokalt,
   findMatchedMinBgSize,
   getRulesForCity,
@@ -551,6 +555,7 @@ router.patch('/listings/:id', async (req, res) => {
       ]);
     }
 
+    await notifyWatchersListingChanged({ before: existing, after: updatedListing });
     return res.json({ listing: updatedListing });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -561,7 +566,7 @@ router.delete('/listings/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { rows: targetRows } = await pool.query(
-      `SELECT external_id, portal, url, title FROM listings WHERE id = $1 LIMIT 1`,
+      `SELECT id, external_id, portal, url, title FROM listings WHERE id = $1 LIMIT 1`,
       [id]
     );
     if (targetRows.length === 0) {
@@ -576,6 +581,7 @@ router.delete('/listings/:id', async (req, res) => {
       [target.external_id, target.portal, target.url, target.title]
     );
 
+    await notifyWatchersListingDeleted({ listing: target, reason: 'admin_deleted' });
     await pool.query(`DELETE FROM listings WHERE id = $1`, [id]);
     return res.json({ ok: true });
   } catch (err) {
@@ -1113,6 +1119,11 @@ router.post('/reports/:id/resolve', async (req, res) => {
     if (action === 'hide') {
       if (listingRow) {
         await client.query(`UPDATE listings SET status = 'manual_hidden' WHERE id = $1`, [listingRow.id]);
+        await notifyWatchersListingChanged({
+          before: listingRow,
+          after: { ...listingRow, status: 'manual_hidden' },
+          client,
+        });
       }
       if (extId) {
         await client.query(
@@ -1150,6 +1161,11 @@ router.post('/reports/:id/resolve', async (req, res) => {
         [adminNote, id, rep.listing_id]
       );
       if (listingRow) {
+        await notifyWatchersListingDeleted({
+          listing: listingRow,
+          reason: 'admin_report_deleted',
+          client,
+        });
         await client.query(`DELETE FROM listings WHERE id = $1`, [listingRow.id]);
       }
     } else {

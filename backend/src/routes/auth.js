@@ -662,4 +662,89 @@ router.put('/me/organization/settings', requireUserAuth, requireActiveOrganizati
   }
 });
 
+// ───────────────────────────────────────────────────────────────────────────
+// News-Inbox / Benachrichtigungen über Änderungen an gemerkten Inseraten
+// ───────────────────────────────────────────────────────────────────────────
+router.get('/me/notifications', requireUserAuth, async (req, res) => {
+  try {
+    const [{ rows }, { rows: countRows }] = await Promise.all([
+      pool.query(
+        `SELECT n.*,
+                l.status AS current_listing_status,
+                l.url AS current_listing_url,
+                l.title AS current_listing_title
+         FROM user_notifications n
+         LEFT JOIN listings l ON l.id = n.listing_id
+         WHERE n.user_id = $1
+         ORDER BY n.created_at DESC
+         LIMIT 60`,
+        [req.user.id]
+      ),
+      pool.query(
+        `SELECT COUNT(*)::int AS unread_count
+         FROM user_notifications
+         WHERE user_id = $1 AND is_read = FALSE`,
+        [req.user.id]
+      ),
+    ]);
+    return res.json({
+      unread_count: countRows[0]?.unread_count ?? 0,
+      notifications: rows,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch('/me/notifications/:id/read', requireUserAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rows } = await pool.query(
+      `UPDATE user_notifications
+       SET is_read = TRUE,
+           read_at = COALESCE(read_at, NOW())
+       WHERE id = $1 AND user_id = $2
+       RETURNING *`,
+      [id, req.user.id]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Benachrichtigung nicht gefunden.' });
+    }
+    return res.json({ notification: rows[0] });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/me/notifications/read-all', requireUserAuth, async (req, res) => {
+  try {
+    const { rowCount } = await pool.query(
+      `UPDATE user_notifications
+       SET is_read = TRUE,
+           read_at = COALESCE(read_at, NOW())
+       WHERE user_id = $1 AND is_read = FALSE`,
+      [req.user.id]
+    );
+    return res.json({ ok: true, marked: rowCount });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/me/notifications/:id', requireUserAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rowCount } = await pool.query(
+      `DELETE FROM user_notifications WHERE id = $1 AND user_id = $2`,
+      [id, req.user.id]
+    );
+    if (rowCount === 0) {
+      return res.status(404).json({ error: 'Benachrichtigung nicht gefunden.' });
+    }
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

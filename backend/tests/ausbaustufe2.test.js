@@ -14,6 +14,7 @@ import {
   isCrossPortalDuplicatePair,
   pickDuplicateWinner,
 } from '../src/services/deduplicator.js';
+import { buildListingChangeEvents } from '../src/services/notifications.js';
 
 test('extractContactInfo extracts phone, email, name and filters portal system emails', () => {
   const html = `
@@ -260,4 +261,59 @@ test('cross-portal deduplicator detects Ohne-Makler/GGW vs Kleinanzeigen duplica
     rooms: 4.5,
   };
   assert.equal(isCrossPortalDuplicatePair(vonoviaA, vonoviaB), false);
+});
+
+test('buildListingChangeEvents detects price drop/increase, offline transition, manual hide, and detail updates', () => {
+  const base = {
+    id: 'listing-1',
+    title: 'Schöne 2-Zi Wohnung in Schalke',
+    status: 'active',
+    cold_rent: 350,
+    additional_costs: 70,
+    calculated_bruttokalt: 420,
+    sqm: 52,
+    rooms: 2,
+    wbs_required: false,
+  };
+
+  // Price drop + room adjustment
+  const priceEvents = buildListingChangeEvents(base, {
+    ...base,
+    cold_rent: 330,
+    calculated_bruttokalt: 400,
+    rooms: 2.5,
+  });
+  assert.equal(priceEvents.length, 2);
+  assert.equal(priceEvents[0].event_type, 'price_changed');
+  assert.ok(priceEvents[0].title.includes('gesunken'));
+  assert.equal(priceEvents[1].event_type, 'listing_updated');
+
+  // Price increase
+  const higherEvents = buildListingChangeEvents(base, {
+    ...base,
+    additional_costs: 90,
+    calculated_bruttokalt: 440,
+  });
+  assert.equal(higherEvents.length, 1);
+  assert.equal(higherEvents[0].event_type, 'price_changed');
+  assert.ok(higherEvents[0].title.includes('gestiegen'));
+
+  // Status -> offline
+  const offlineEvents = buildListingChangeEvents(base, {
+    ...base,
+    status: 'offline',
+  });
+  assert.equal(offlineEvents.length, 1);
+  assert.equal(offlineEvents[0].event_type, 'listing_offline');
+
+  // Status -> manual_hidden
+  const hiddenEvents = buildListingChangeEvents(base, {
+    ...base,
+    status: 'manual_hidden',
+  });
+  assert.equal(hiddenEvents.length, 1);
+  assert.equal(hiddenEvents[0].event_type, 'listing_hidden');
+
+  // Identical listing produces no events
+  assert.deepEqual(buildListingChangeEvents(base, { ...base }), []);
 });
