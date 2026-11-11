@@ -894,35 +894,35 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
             {(data?.items || []).map((item) => (
               <article
                 key={item.id}
-                className="flex flex-col justify-between rounded-2xl border border-slate-800 bg-slate-900/80 p-4 transition hover:border-slate-700 sm:p-5"
+                className="flex h-full flex-col justify-between rounded-2xl border border-slate-800 bg-slate-900/80 p-4 transition hover:border-slate-700 sm:p-5"
               >
-                <div>
-                  {/* Badges */}
-                  <div className="mb-3 flex flex-wrap items-center gap-2">
+                <div className="flex flex-1 flex-col">
+                  {/* Badges (standard single/compact row height) */}
+                  <div className="mb-2.5 flex min-h-[28px] flex-wrap items-center gap-1.5">
                     {item.compliance_status === 'tolerance' ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-300 ring-1 ring-amber-500/30">
-                        <AlertTriangle className="h-3.5 w-3.5" />
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-300 ring-1 ring-amber-500/30">
+                        <AlertTriangle className="h-3 w-3" />
                         Eigenanteil +{formatEur(item.eigenanteil_eur)}
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-300 ring-1 ring-emerald-500/30">
-                        <CheckCircle2 className="h-3.5 w-3.5" />
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300 ring-1 ring-emerald-500/30">
+                        <CheckCircle2 className="h-3 w-3" />
                         {item.compliance_status === 'produkttheorie'
-                          ? 'Jobcenter-Konform (Produkttheorie)'
+                          ? 'KdU-Konform (Produkttheorie)'
                           : '100% Jobcenter-Konform'}
                       </span>
                     )}
 
                     {item.is_private_landlord && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/15 px-2.5 py-1 text-xs font-semibold text-sky-300 ring-1 ring-sky-500/40">
-                        <UserCheck className="h-3.5 w-3.5" />
+                      <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-semibold text-sky-300 ring-1 ring-sky-500/40">
+                        <UserCheck className="h-3 w-3" />
                         Privatvermieter
                       </span>
                     )}
 
                     {item.wbs_required && (
-                      <span className="rounded-full bg-purple-500/15 px-2.5 py-1 text-xs font-semibold text-purple-300 ring-1 ring-purple-500/30">
-                        WBS erforderlich
+                      <span className="rounded-full bg-purple-500/15 px-2 py-0.5 text-[11px] font-semibold text-purple-300 ring-1 ring-purple-500/30">
+                        WBS
                       </span>
                     )}
 
@@ -931,17 +931,20 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                     </span>
                   </div>
 
-                  {/* Title & Location */}
-                  <h2 className="line-clamp-2 text-base font-bold leading-snug text-white">
+                  {/* Title (fixed 2-line slot so all cards align horizontally) */}
+                  <h2 className="min-h-[2.75rem] line-clamp-2 text-base font-bold leading-snug text-white">
                     {item.title}
                   </h2>
 
-                  <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-400">
+                  {/* Location & Specs (fixed row height) */}
+                  <div className="mt-2 flex min-h-[26px] flex-wrap items-center gap-2 text-xs text-slate-400">
                     <span className="inline-flex items-center gap-1 font-medium text-slate-300">
-                      <MapPin className="h-3.5 w-3.5 text-emerald-400" />
-                      {item.zipcode ? `${item.zipcode} ` : ''}
-                      {item.city}
-                      {item.district && item.district !== item.city ? ` – ${item.district}` : ''}
+                      <MapPin className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                      <span className="truncate max-w-[230px]">
+                        {item.zipcode ? `${item.zipcode} ` : ''}
+                        {item.city}
+                        {item.district && item.district !== item.city ? ` – ${item.district}` : ''}
+                      </span>
                     </span>
                     {item.sqm !== null && (
                       <span className="rounded-md bg-slate-800 px-2 py-0.5 text-slate-200">
@@ -955,58 +958,83 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                     )}
                   </div>
 
-                  {/* Direct Contact / Provider Info directly below Title & Specs */}
-                  {user && (item.contact_phone || item.contact_email || item.contact_name) && (
-                    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs">
-                      {item.contact_name && (
-                        <span className="line-clamp-1 font-medium text-slate-200" title={item.contact_name}>
-                          {item.contact_name}
-                        </span>
-                      )}
-                      {item.contact_phone && (
-                        <a
-                          href={`tel:${item.contact_phone}`}
-                          className="inline-flex items-center gap-1 font-semibold text-emerald-300 hover:underline"
-                        >
-                          <Phone className="h-3 w-3 shrink-0" />
-                          {item.contact_phone}
-                        </a>
-                      )}
-                      {item.contact_email && (
-                        <a
-                          href={`mailto:${item.contact_email}`}
-                          className="inline-flex items-center gap-1 font-semibold text-sky-300 hover:underline"
-                        >
-                          <Mail className="h-3 w-3 shrink-0" />
-                          {item.contact_email}
-                        </a>
-                      )}
+                  {/* Standardized Contact / Provider Slot directly below Title & Specs */}
+                  {user ? (
+                    item.contact_phone || item.contact_email || item.contact_name ? (
+                      <div className="mt-3 flex h-[56px] flex-col justify-center gap-1 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs">
+                        <div className="truncate font-medium text-slate-200" title={item.contact_name || ''}>
+                          {item.contact_name || `Anbieter (${formatPortal(item.portal)})`}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 truncate">
+                          {item.contact_phone && (
+                            <a
+                              href={`tel:${item.contact_phone}`}
+                              className="inline-flex items-center gap-1 font-semibold text-emerald-300 hover:underline"
+                            >
+                              <Phone className="h-3 w-3 shrink-0" />
+                              {item.contact_phone}
+                            </a>
+                          )}
+                          {item.contact_email && (
+                            <a
+                              href={`mailto:${item.contact_email}`}
+                              className="inline-flex items-center gap-1 truncate font-semibold text-sky-300 hover:underline"
+                            >
+                              <Mail className="h-3 w-3 shrink-0" />
+                              {item.contact_email}
+                            </a>
+                          )}
+                          {!item.contact_phone && !item.contact_email && (
+                            <span className="text-[11px] text-slate-400">
+                              Kontakt über Originalanzeige ({formatPortal(item.portal)})
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-3 flex h-[56px] flex-col justify-center gap-0.5 rounded-xl border border-slate-800/80 bg-slate-950/40 px-3 py-2 text-xs text-slate-400">
+                        <div className="truncate font-medium text-slate-300">
+                          Anbieter über {formatPortal(item.portal)}
+                        </div>
+                        <div className="truncate text-[11px] text-slate-500">
+                          Keine direkte Telefonnummer hinterlegt · Anfrage über Originalanzeige
+                        </div>
+                      </div>
+                    )
+                  ) : (
+                    <div className="mt-3 flex h-[56px] items-center gap-2 rounded-xl border border-slate-800/80 bg-slate-950/40 px-3 py-2 text-xs text-slate-500">
+                      <Lock className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+                      <span className="truncate">
+                        Direkte Anbieter- &amp; Kontaktdaten nach Login sichtbar
+                      </span>
                     </div>
                   )}
 
-                  {/* Rent Breakdown */}
-                  <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-                    <div className="flex flex-wrap items-baseline justify-between gap-2">
-                      <div>
-                        <span className="text-xs text-slate-400">Bruttokaltmiete</span>
-                        <div className="text-xl font-extrabold text-white">
-                          {formatEur(item.calculated_bruttokalt)}
-                        </div>
-                      </div>
-                      <div className="text-right text-xs text-slate-400">
+                  {/* Rent Breakdown (uniform height + anchored cleanly at bottom of upper block) */}
+                  <div className="mt-auto pt-3">
+                    <div className="flex min-h-[76px] items-center rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+                      <div className="flex w-full flex-wrap items-baseline justify-between gap-2">
                         <div>
-                          Kalt: <span className="font-semibold text-slate-200">{formatEur(item.cold_rent)}</span>
-                          {' + '}
-                          NK:{' '}
-                          <span className="font-semibold text-slate-200">
-                            {formatEur(item.additional_costs)}
-                          </span>
-                        </div>
-                        {item.heating_costs > 0 && (
-                          <div className="mt-0.5 text-[11px] text-slate-500">
-                            + Heizkosten (separat): {formatEur(item.heating_costs)}
+                          <span className="text-xs text-slate-400">Bruttokaltmiete</span>
+                          <div className="text-xl font-extrabold text-white">
+                            {formatEur(item.calculated_bruttokalt)}
                           </div>
-                        )}
+                        </div>
+                        <div className="text-right text-xs text-slate-400">
+                          <div>
+                            Kalt: <span className="font-semibold text-slate-200">{formatEur(item.cold_rent)}</span>
+                            {' + '}
+                            NK:{' '}
+                            <span className="font-semibold text-slate-200">
+                              {formatEur(item.additional_costs)}
+                            </span>
+                          </div>
+                          <div className="mt-0.5 text-[11px] text-slate-500">
+                            {item.heating_costs > 0
+                              ? `+ Heizkosten (separat): ${formatEur(item.heating_costs)}`
+                              : 'Heizkosten: separat / laut Inserat'}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
