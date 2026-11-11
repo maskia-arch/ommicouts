@@ -106,3 +106,45 @@ test('validateListing supports dynamic multi-city zipPrefixes and blocks Demenz-
   );
   assert.equal(demenzWg.valid, false);
 });
+
+test('parseKduContent parses official Jobcenter Gelsenkirchen HTML table (unitless m² cells)', () => {
+  const html = `
+    <html><body>
+      <p>Für jede weitere Person im Haushalt kann ein Mehrbetrag von insgesamt 104,00 € für die angemessenen Kosten der Unterkunft berücksichtigt werden.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Haushalt</th>
+            <th>Wohnungsgröße in m²</th>
+            <th>Netto-Kaltmiete</th>
+            <th>mittlere (kalte) Betriebskosten</th>
+            <th>angemessene KdU</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Alleinstehende</td><td>50</td><td>320,00 €</td><td>104,00 €</td><td>424,00 €</td></tr>
+          <tr><td>2 Personen</td><td>65</td><td>390,00 €</td><td>135,00 €</td><td>525,00 €</td></tr>
+          <tr><td>3 Personen</td><td>80</td><td>470,00 €</td><td>166,00 €</td><td>636,00 €</td></tr>
+          <tr><td>4 Personen</td><td>95</td><td>590,00 €</td><td>197,00 €</td><td>787,00 €</td></tr>
+          <tr><td>5 Personen</td><td>110</td><td>700,00 €</td><td>228,00 €</td><td>928,00 €</td></tr>
+        </tbody>
+      </table>
+    </body></html>
+  `;
+
+  const res = parseKduContent(html, 'text/html');
+  assert.equal(res.ok, true);
+  assert.equal(res.rules.length, 5);
+  assert.deepEqual(
+    res.rules.map((r) => [r.bg_size, r.max_sqm, r.max_bruttokalt_eur]),
+    [
+      [1, 50, 424],
+      [2, 65, 525],
+      [3, 80, 636],
+      [4, 95, 787],
+      [5, 110, 928],
+    ]
+  );
+  assert.equal(res.rules[0].extra_person_sqm, 15);
+  assert.equal(res.rules[0].extra_person_eur, 104);
+});

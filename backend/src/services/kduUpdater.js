@@ -50,32 +50,105 @@ function parseJsonKdu(rawText) {
   return parsed.length >= 2 ? parsed : null;
 }
 
-function detectBgFromLine(text) {
-  const t = String(text || '').toLowerCase();
-  if (/\b1\s*(?:person|pers\.?|p\.|personenhaushalt|erwachsene)\b|\balleinstehend|\bsingle\b/.test(t)) {
+function detectBgFromLine(text, allowBareNumber = false) {
+  const t = String(text || '').toLowerCase().trim();
+  if (
+    /\b1\s*(?:person|pers\.?|p\.|personenhaushalt|personen-haushalt|erwachsene)\b|\balleinstehend|\beinpersonenhaushalt|\bsingle\b/.test(
+      t
+    )
+  ) {
     return 1;
   }
-  const m = t.match(/\b([1-9]|10)\s*(?:personen|pers\.?|p\b|personen-?haushalt|mitglieder)/i);
+  const wordNumbers = [
+    ['zwei', 2],
+    ['drei', 3],
+    ['vier', 4],
+    ['fünf', 5],
+    ['fuenf', 5],
+    ['sechs', 6],
+  ];
+  for (const [word, num] of wordNumbers) {
+    if (new RegExp(`\\b${word}personen`, 'i').test(t)) return num;
+  }
+  const m = t.match(/\b([1-9]|10)\s*(?:-\s*)?(?:personen|pers\.?|p\b|personen-?haushalt|mitglieder|person)/i);
   if (m) return parseInt(m[1], 10);
+  if (allowBareNumber && /^\d{1,2}$/.test(t)) {
+    const n = parseInt(t, 10);
+    if (n >= 1 && n <= 10) return n;
+  }
   return null;
 }
 
-function extractExtraPersonFromText(text) {
+function extractExtraPersonFromText(text, fallbackSqm = 15) {
   const m = String(text || '').match(
-    /(?:jede\s+weitere\s+person|weitere\s+person|\+\s*1\s*person)[^\n]{0,120}/i
+    /(?:jede\s+weitere\s+person|weitere\s+person|\+\s*1\s*person)[\s\S]{0,160}/i
   );
-  if (!m) return { extraSqm: 15, extraEur: 116.6 };
-  const line = m[0];
-  const sqmM = line.match(/(\d{1,2}(?:[.,]\d{1,2})?)\s*(?:m²|qm)/i);
-  const eurM = line.match(/(\d{2,3}(?:[.,]\d{1,2})?)\s*(?:€|eur)/i);
+  if (!m) return { extraSqm: fallbackSqm, extraEur: 116.6 };
+  const snippet = m[0];
+  const sqmM = snippet.match(/(\d{1,2}(?:[.,]\d{1,2})?)\s*(?:m²|m2|qm\b)/i);
+  const eurM = snippet.match(/(\d{2,4}(?:[.,]\d{1,2})?)\s*(?:€|eur\b)/i);
   return {
-    extraSqm: sqmM ? parseGermanNumber(sqmM[1]) || 15 : 15,
+    extraSqm: sqmM ? parseGermanNumber(sqmM[1]) || fallbackSqm : fallbackSqm,
     extraEur: eurM ? parseGermanNumber(eurM[1]) || 116.6 : 116.6,
   };
 }
 
+function detectTableColumnMapping($, tableEl) {
+  const headerRows = $(tableEl).find('thead tr');
+  const firstRow = headerRows.length > 0 ? headerRows.first() : $(tableEl).find('tr').first();
+  const headers = firstRow
+    .find('th, td')
+    .map((_, c) => $(c).text().replace(/\s+/g, ' ').trim().toLowerCase())
+    .get();
+
+  let bgCol = -1;
+  let sqmCol = -1;
+  let kduCol = -1;
+  let fallbackRentCol = -1;
+
+  headers.forEach((h, idx) => {
+    if (bgCol === -1 && /(haushalt|person|bedarfsgemeinschaft|\bbg\b|haushaltsgröße)/i.test(h)) {
+      bgCol = idx;
+    }
+    if (sqmCol === -1 && /(wohnungsgröße|wohnfläche|fläche|\bm²\b|\bm2\b|\bqm\b)/i.test(h)) {
+      sqmCol = idx;
+    }
+    if (
+      /(angemessene\s*kdu|bruttokalt|gesamt(?:miete|betrag)?|kosten\s*der\s*unterkunft|mietobergrenze|höchstbetrag|richtwert)/i.test(
+        h
+      )
+    ) {
+      kduCol = idx;
+    } else if (
+      /(miete|\bkdu\b|betrag|€|eur)/i.test(h) &&
+      !/(netto-?kalt|kaltmiete|betriebskosten|nebenkosten|heizkosten)/i.test(h)
+    ) {
+      fallbackRentCol = idx;
+    }
+  });
+
+  const hasHeader = bgCol !== -1 || sqmCol !== -1 || kduCol !== -1;
+  return {
+    hasHeader,
+    headerRowEl: hasHeader ? firstRow.get(0) : null,
+    bgCol: bgCol !== -1 ? bgCol : 0,
+    sqmCol,
+    kduCol: kduCol !== -1 ? kduCol : fallbackRentCol,
+  };
+}
+
+function inferSqmStep(entries) {
+  if (entries.length < 2) return 15;
+  const sorted = [...entries].sort((a, b) => a.bg_size - b.bg_size);
+  const diff = Number(sorted[1].max_sqm) - Number(sorted[0].max_sqm);
+  if (Number.isFinite(diff) && diff >= 5 && diff <= 30) {
+    return Math.round(diff * 100) / 100;
+  }
+  return 15;
+}
+
 /**
- * Parses KdU rules from JSON or HTML/Text (tables or structured paragraphs).
+ * Parses KdU rules from JSON or HTML/Text (header-aware tables, inline-unit tables, or paragraphs).
  */
 export function parseKduContent(content, contentType = '') {
   const text = String(content || '').trim();
@@ -90,36 +163,69 @@ export function parseKduContent(content, contentType = '') {
 
   const $ = cheerio.load(text);
   const fullBodyText = $('body').text().replace(/\s+/g, ' ');
-  const { extraSqm, extraEur } = extractExtraPersonFromText(fullBodyText);
+  const { extraSqm: parsedExtraSqm, extraEur } = extractExtraPersonFromText(fullBodyText);
 
   const byBg = new Map();
 
-  // 1. Scan HTML table rows first (highest accuracy for municipal KdU tables)
-  $('table tr').each((_, tr) => {
-    const cells = $(tr)
-      .find('th, td')
-      .map((__, c) => $(c).text().replace(/\s+/g, ' ').trim())
-      .get();
-    if (cells.length < 2) return;
+  // 1. Scan each HTML table with header column detection (handles unitless m² cells like "50" under "Wohnungsgröße in m²")
+  $('table').each((_, tableEl) => {
+    const colMap = detectTableColumnMapping($, tableEl);
 
-    const rowText = cells.join(' | ');
-    const bg = detectBgFromLine(cells[0]) || detectBgFromLine(rowText);
-    if (!bg) return;
+    $(tableEl)
+      .find('tr')
+      .each((__, tr) => {
+        if (colMap.headerRowEl && tr === colMap.headerRowEl) return;
 
-    const sqmMatches = [...rowText.matchAll(/(\d{2,3}(?:[.,]\d{1,2})?)\s*(?:m²|m2|qm\b)/gi)];
-    const eurMatches = [...rowText.matchAll(/(\d{3,4}(?:[.,]\d{1,2})?)\s*(?:€|eur\b)/gi)];
+        const cells = $(tr)
+          .find('th, td')
+          .map((___, c) => $(c).text().replace(/\s+/g, ' ').trim())
+          .get();
+        if (cells.length < 2) return;
 
-    const sqm = sqmMatches.length > 0 ? parseGermanNumber(sqmMatches[0][1]) : null;
-    // If a table shows Kaltmiete + NK + Bruttokalt, the last/largest reasonable Euro column is usually Bruttokalt
-    const eurCandidates = eurMatches
-      .map((m) => parseGermanNumber(m[1]))
-      .filter((n) => n !== null && n >= 180 && n <= 3000);
-    const eur = eurCandidates.length > 0 ? eurCandidates[eurCandidates.length - 1] : null;
+        const rowText = cells.join(' | ');
+        const bgCell = cells[colMap.bgCol] ?? cells[0];
+        const bg = detectBgFromLine(bgCell, colMap.hasHeader) || detectBgFromLine(rowText);
+        if (!bg) return;
 
-    const entry = normalizeRuleEntry(bg, sqm, eur, extraSqm, extraEur);
-    if (entry && !byBg.has(bg)) {
-      byBg.set(bg, entry);
-    }
+        let sqm = null;
+        if (colMap.sqmCol >= 0 && cells[colMap.sqmCol] !== undefined) {
+          sqm = parseGermanNumber(cells[colMap.sqmCol]);
+        }
+        if (sqm === null) {
+          const sqmMatches = [...rowText.matchAll(/(\d{2,3}(?:[.,]\d{1,2})?)\s*(?:m²|m2|qm\b)/gi)];
+          if (sqmMatches.length > 0) sqm = parseGermanNumber(sqmMatches[0][1]);
+        }
+        if (sqm === null) {
+          // Last-resort unitless sqm column (integer/decimal in 20..250 without currency symbol)
+          for (let i = 1; i < cells.length; i++) {
+            if (!/[€eur]/i.test(cells[i])) {
+              const candidate = parseGermanNumber(cells[i]);
+              if (candidate !== null && candidate >= 20 && candidate <= 250) {
+                sqm = candidate;
+                break;
+              }
+            }
+          }
+        }
+
+        let eur = null;
+        if (colMap.kduCol >= 0 && cells[colMap.kduCol] !== undefined) {
+          const val = parseGermanNumber(cells[colMap.kduCol]);
+          if (val !== null && val >= 180 && val <= 3000) eur = val;
+        }
+        if (eur === null) {
+          const eurMatches = [...rowText.matchAll(/(\d{3,4}(?:[.,]\d{1,2})?)\s*(?:€|eur\b)/gi)];
+          const eurCandidates = eurMatches
+            .map((m) => parseGermanNumber(m[1]))
+            .filter((n) => n !== null && n >= 180 && n <= 3000);
+          if (eurCandidates.length > 0) eur = eurCandidates[eurCandidates.length - 1];
+        }
+
+        const entry = normalizeRuleEntry(bg, sqm, eur, parsedExtraSqm, extraEur);
+        if (entry && !byBg.has(bg)) {
+          byBg.set(bg, entry);
+        }
+      });
   });
 
   // 2. Fallback: scan list items / lines
@@ -135,14 +241,25 @@ export function parseKduContent(content, contentType = '') {
         bg,
         sqmM ? parseGermanNumber(sqmM[1]) : null,
         eurM ? parseGermanNumber(eurM[1]) : null,
-        extraSqm,
+        parsedExtraSqm,
         extraEur
       );
       if (entry) byBg.set(bg, entry);
     });
   }
 
-  const rules = [...byBg.values()].sort((a, b) => a.bg_size - b.bg_size);
+  const rawRules = [...byBg.values()].sort((a, b) => a.bg_size - b.bg_size);
+  const inferredSqmStep = inferSqmStep(rawRules);
+  const finalExtraSqm =
+    fullBodyText.match(/(?:jede\s+weitere\s+person|weitere\s+person|\+\s*1\s*person)[\s\S]{0,120}(?:m²|qm)/i)
+      ? parsedExtraSqm
+      : inferredSqmStep;
+
+  const rules = rawRules.map((r) => ({
+    ...r,
+    extra_person_sqm: finalExtraSqm,
+    extra_person_eur: extraEur,
+  }));
 
   // Guardrail: require at least 3 valid consecutive/distinct tiers to prevent bad overwrites
   if (rules.length < 3) {
@@ -270,6 +387,11 @@ export async function syncKduSourceForCity(city) {
         [src.city, r.bg_size, r.max_sqm, r.max_bruttokalt_eur, r.extra_person_sqm, r.extra_person_eur]
       );
     }
+    const maxParsedBg = Math.max(...preview.rules.map((r) => r.bg_size));
+    await client.query(
+      `DELETE FROM kdu_rules WHERE LOWER(city) = LOWER($1) AND bg_size > $2`,
+      [src.city, maxParsedBg]
+    );
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');
