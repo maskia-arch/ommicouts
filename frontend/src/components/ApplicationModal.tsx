@@ -1,14 +1,34 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
-import { Check, Copy, FileText, ShieldCheck, X } from 'lucide-react';
-import type { KduRule, ListingItem } from '@/types/immo';
+import {
+  BookmarkPlus,
+  Check,
+  Copy,
+  ExternalLink,
+  FileText,
+  Link2,
+  ShieldCheck,
+  X,
+} from 'lucide-react';
+import type {
+  ApplicationStatus,
+  KduRule,
+  ListingItem,
+  PortalKey,
+  UserApplication,
+  UserProfile,
+} from '@/types/immo';
 
 interface ApplicationModalProps {
   listing: ListingItem;
   rule: KduRule;
   bgSize: number;
   benefitType: 'sgb2' | 'sgb12';
+  user?: UserProfile | null;
+  existingApplication?: UserApplication | null;
+  onTracked?: () => void;
+  onOpenUserArea?: () => void;
   onClose: () => void;
 }
 
@@ -17,24 +37,82 @@ function formatEur(val: number | null | undefined): string {
   return `${val.toFixed(2).replace('.', ',')} €`;
 }
 
+function resolvePortalMeta(listing: ListingItem): {
+  key: PortalKey;
+  label: string;
+  loginUrl: string;
+} {
+  const url = String(listing.url || '').toLowerCase();
+  if (listing.portal === 'kleinanzeigen' || url.includes('kleinanzeigen.de')) {
+    return {
+      key: 'kleinanzeigen',
+      label: 'Kleinanzeigen',
+      loginUrl: 'https://www.kleinanzeigen.de/m-einloggen.html',
+    };
+  }
+  if (listing.portal === 'immowelt' || url.includes('immowelt.de')) {
+    return {
+      key: 'immowelt',
+      label: 'Immowelt',
+      loginUrl: 'https://www.immowelt.de/',
+    };
+  }
+  if (url.includes('ohne-makler.net')) {
+    return {
+      key: 'ohne_makler',
+      label: 'Ohne-Makler.net',
+      loginUrl: 'https://www.ohne-makler.net/accounts/login/',
+    };
+  }
+  if (url.includes('ggw-gelsenkirchen.de')) {
+    return {
+      key: 'ggw',
+      label: 'GGW Gelsenkirchen',
+      loginUrl: 'https://www.ggw-gelsenkirchen.de/mietangebote/',
+    };
+  }
+  return {
+    key: 'immoscout',
+    label: 'ImmoScout24',
+    loginUrl: 'https://www.immobilienscout24.de/',
+  };
+}
+
 export function ApplicationModal({
   listing,
   rule,
   bgSize,
   benefitType,
+  user,
+  existingApplication,
+  onTracked,
+  onOpenUserArea,
   onClose,
 }: ApplicationModalProps) {
-  const [applicantName, setApplicantName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [moveInDate, setMoveInDate] = useState('ab sofort / nach Absprache');
-  const [personalNote, setPersonalNote] = useState(
-    bgSize === 1
-      ? 'ruhige, zuverlässige Einzelperson, Nichtraucher, keine Haustiere'
-      : `ruhiger ${bgSize}-Personen-Haushalt, zuverlässig und ordentlich`
+  const [applicantName, setApplicantName] = useState(user?.full_name || '');
+  const [phone, setPhone] = useState(user?.phone || '');
+  const [moveInDate, setMoveInDate] = useState(
+    user?.move_in_date || 'ab sofort / nach Absprache'
   );
-  const [emphasizeDirectTransfer, setEmphasizeDirectTransfer] = useState(true);
-  const [addressSchufaDirectly, setAddressSchufaDirectly] = useState(true);
+  const [personalNote, setPersonalNote] = useState(
+    user?.personal_note ||
+      (bgSize === 1
+        ? 'ruhige, zuverlässige Einzelperson, Nichtraucher, keine Haustiere'
+        : `ruhiger ${bgSize}-Personen-Haushalt, zuverlässig und ordentlich`)
+  );
+  const [emphasizeDirectTransfer, setEmphasizeDirectTransfer] = useState(
+    user?.emphasize_direct_transfer ?? true
+  );
+  const [addressSchufaDirectly, setAddressSchufaDirectly] = useState(
+    user?.address_schufa_directly ?? true
+  );
   const [copied, setCopied] = useState(false);
+  const [savingStatus, setSavingStatus] = useState<ApplicationStatus | null>(null);
+  const [trackNotice, setTrackNotice] = useState<string | null>(null);
+  const [trackError, setTrackError] = useState<string | null>(null);
+
+  const portalMeta = useMemo(() => resolvePortalMeta(listing), [listing]);
+  const linkedEntry = user?.linked_portals?.[portalMeta.key];
 
   const authorityName =
     benefitType === 'sgb12'
@@ -107,6 +185,55 @@ ${nameLine}${phoneLine}`;
     }
   };
 
+  const trackApplication = async (status: ApplicationStatus) => {
+    if (!user) return;
+    setSavingStatus(status);
+    setTrackError(null);
+    setTrackNotice(null);
+    try {
+      const res = await fetch('/api/me/applications', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          listing_id: listing.id,
+          status,
+          message_text: generatedText,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.error || `HTTP ${res.status}`);
+      }
+      setTrackNotice(
+        status === 'saved'
+          ? 'In „Mein Bereich“ als vorgemerkt gespeichert.'
+          : 'In „Mein Bereich“ als kontaktiert gespeichert.'
+      );
+      onTracked?.();
+    } catch (err) {
+      setTrackError(
+        err instanceof Error ? err.message : 'Speichern in „Mein Bereich“ fehlgeschlagen.'
+      );
+    } finally {
+      setSavingStatus(null);
+    }
+  };
+
+  const handleCopyAndOpen = async () => {
+    try {
+      await navigator.clipboard.writeText(generatedText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      // Clipboard fallback ignored
+    }
+    if (user) {
+      await trackApplication('contacted');
+    }
+    window.open(listing.url, '_blank', 'noopener,noreferrer');
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-3 backdrop-blur-sm sm:p-6"
@@ -138,6 +265,70 @@ ${nameLine}${phoneLine}`;
 
         {/* Body */}
         <div className="flex-1 space-y-4 overflow-y-auto p-5">
+          {/* Portal-Verknüpfung & Tracker Status */}
+          <div className="flex flex-col gap-2.5 rounded-xl border border-slate-800 bg-slate-950/70 p-3.5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1 font-semibold text-slate-200">
+                  <Link2 className="h-3.5 w-3.5 text-emerald-400" />
+                  Portal-Konto ({portalMeta.label}):
+                </span>
+                {linkedEntry?.linked ? (
+                  <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">
+                    Verknüpft{linkedEntry.account_label ? ` (${linkedEntry.account_label})` : ''}
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[11px] font-semibold text-amber-300">
+                    Noch nicht als bereit markiert
+                  </span>
+                )}
+                {existingApplication && (
+                  <span className="rounded-full bg-sky-500/20 px-2 py-0.5 text-[11px] font-semibold text-sky-300">
+                    Bereits in „Mein Bereich“ ({existingApplication.application_status})
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-[11px] text-slate-400">
+                Für die echte Kontaktaufnahme auf {portalMeta.label} öffnet der Button unten das
+                Original-Inserat mit deinem eingeloggten {portalMeta.label}-Konto.
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <a
+                href={portalMeta.loginUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-[11px] font-semibold text-slate-200 transition hover:bg-slate-800"
+              >
+                {portalMeta.label} Login
+                <ExternalLink className="h-3 w-3" />
+              </a>
+              {onOpenUserArea && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenUserArea();
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-300 transition hover:bg-emerald-500/20"
+                >
+                  Konten verwalten
+                </button>
+              )}
+            </div>
+          </div>
+
+          {trackNotice && (
+            <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3.5 py-2 text-xs text-emerald-200">
+              {trackNotice}
+            </div>
+          )}
+          {trackError && (
+            <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-3.5 py-2 text-xs text-rose-200">
+              {trackError}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-300">
@@ -230,31 +421,32 @@ ${nameLine}${phoneLine}`;
         {/* Footer */}
         <div className="flex flex-col-reverse items-stretch justify-between gap-2 border-t border-slate-800 bg-slate-900/95 px-5 py-3.5 sm:flex-row sm:items-center">
           <button
+            type="button"
             onClick={onClose}
             className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:bg-slate-800"
           >
             Schließen
           </button>
           <div className="flex flex-col gap-2 sm:flex-row">
-            <a
-              href={listing.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center justify-center rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700"
-            >
-              Original-Inserat öffnen
-            </a>
+            {user && (
+              <button
+                type="button"
+                onClick={() => trackApplication('saved')}
+                disabled={savingStatus !== null}
+                className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm font-medium text-slate-200 transition hover:bg-slate-700 disabled:opacity-50"
+              >
+                <BookmarkPlus className="h-4 w-4" />
+                {savingStatus === 'saved' ? 'Speichere...' : 'Nur merken'}
+              </button>
+            )}
             <button
+              type="button"
               onClick={handleCopy}
-              className={`inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold transition ${
-                copied
-                  ? 'bg-emerald-500 text-slate-950'
-                  : 'bg-emerald-500 text-slate-950 hover:bg-emerald-400'
-              }`}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700"
             >
               {copied ? (
                 <>
-                  <Check className="h-4 w-4" />
+                  <Check className="h-4 w-4 text-emerald-400" />
                   Kopiert!
                 </>
               ) : (
@@ -263,6 +455,17 @@ ${nameLine}${phoneLine}`;
                   Text kopieren
                 </>
               )}
+            </button>
+            <button
+              type="button"
+              onClick={handleCopyAndOpen}
+              disabled={savingStatus !== null}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-50"
+            >
+              <ExternalLink className="h-4 w-4" />
+              {savingStatus === 'contacted'
+                ? 'Speichere...'
+                : 'Kopieren, als kontaktiert speichern & Inserat öffnen'}
             </button>
           </div>
         </div>

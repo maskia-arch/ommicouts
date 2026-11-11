@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import { config } from './config.js';
 import { ensureDatabaseInitialized, pool } from './db.js';
 import adminRoutes from './routes/admin.js';
+import authRoutes from './routes/auth.js';
 import publicRoutes from './routes/public.js';
 import webhookRoutes from './routes/webhook.js';
 import { reloadSchedules, stopAllSchedules } from './scraper/scheduler.js';
@@ -29,6 +30,7 @@ app.use(
     },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'x-admin-key', 'x-webhook-secret', 'Authorization'],
+    credentials: true,
   })
 );
 
@@ -36,6 +38,7 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 app.use('/api', publicRoutes);
+app.use('/api', authRoutes);
 app.use('/api/webhook', webhookRoutes);
 app.use('/api/admin', adminRoutes);
 

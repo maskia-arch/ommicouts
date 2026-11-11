@@ -15,6 +15,7 @@ async function proxyToBackend(
   const allowHeaders = [
     'content-type',
     'accept',
+    'cookie',
     'x-admin-key',
     'x-webhook-secret',
     'authorization',
@@ -23,6 +24,8 @@ async function proxyToBackend(
     const val = req.headers.get(h);
     if (val) forwardHeaders.set(h, val);
   }
+  const fwdProto = req.headers.get('x-forwarded-proto') || req.nextUrl.protocol.replace(':', '');
+  if (fwdProto) forwardHeaders.set('x-forwarded-proto', fwdProto);
 
   const hasBody = !['GET', 'HEAD'].includes(req.method.toUpperCase());
   const bodyBuffer = hasBody ? await req.arrayBuffer() : undefined;
@@ -38,6 +41,16 @@ async function proxyToBackend(
     const responseHeaders = new Headers();
     const contentType = upstream.headers.get('content-type');
     if (contentType) responseHeaders.set('content-type', contentType);
+
+    const setCookies =
+      typeof upstream.headers.getSetCookie === 'function'
+        ? upstream.headers.getSetCookie()
+        : upstream.headers.get('set-cookie')
+          ? [upstream.headers.get('set-cookie') as string]
+          : [];
+    for (const c of setCookies) {
+      if (c) responseHeaders.append('set-cookie', c);
+    }
 
     const rawBody = await upstream.arrayBuffer();
     return new NextResponse(rawBody, {

@@ -252,6 +252,46 @@ CREATE TABLE IF NOT EXISTS scraper_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_scraper_logs_started_at ON scraper_logs (started_at DESC);
+
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    full_name VARCHAR(150) NOT NULL DEFAULT '',
+    phone VARCHAR(60) NOT NULL DEFAULT '',
+    preferred_city VARCHAR(100) NOT NULL DEFAULT 'Gelsenkirchen',
+    bg_size INT NOT NULL DEFAULT 1 CHECK (bg_size >= 1 AND bg_size <= 20),
+    benefit_type VARCHAR(20) NOT NULL DEFAULT 'sgb2' CHECK (benefit_type IN ('sgb2', 'sgb12')),
+    move_in_date VARCHAR(120) NOT NULL DEFAULT 'ab sofort / nach Absprache',
+    personal_note TEXT NOT NULL DEFAULT '',
+    emphasize_direct_transfer BOOLEAN NOT NULL DEFAULT TRUE,
+    address_schufa_directly BOOLEAN NOT NULL DEFAULT TRUE,
+    linked_portals JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'blocked')),
+    admin_note TEXT,
+    last_login_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users (LOWER(email));
+CREATE INDEX IF NOT EXISTS idx_users_status ON users (status);
+
+CREATE TABLE IF NOT EXISTS user_applications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    listing_id UUID NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+    portal VARCHAR(50) NOT NULL DEFAULT 'other',
+    status VARCHAR(30) NOT NULL DEFAULT 'contacted' CHECK (status IN ('saved', 'contacted', 'viewing', 'accepted', 'rejected')),
+    message_text TEXT,
+    notes TEXT,
+    contacted_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_user_listing UNIQUE (user_id, listing_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_apps_user_id ON user_applications (user_id, updated_at DESC);
 `;
 
 export async function cleanupInvalidListings() {

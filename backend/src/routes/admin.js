@@ -25,6 +25,13 @@ import {
   generateSearchConfigsForCity,
   onboardCity,
 } from '../services/cityOnboarding.js';
+import {
+  hashPassword,
+  isValidEmail,
+  normalizeEmail,
+  normalizeLinkedPortals,
+  sanitizeUser,
+} from '../services/userAuth.js';
 
 const router = Router();
 router.use(requireAdminKey);
@@ -735,6 +742,246 @@ router.get('/scraper/logs', async (req, res) => {
       [limit]
     );
     return res.json({ logs: rows, engine: getEngineStatus() });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ------------------------------------------------------------------------------
+// User Management (/api/admin/users*)
+// ------------------------------------------------------------------------------
+router.get('/users', async (req, res) => {
+  try {
+    const status = String(req.query.status || 'all').trim();
+    const search = String(req.query.search || '').trim();
+    const page = Math.max(1, parseInt(req.query.page || '1', 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '30', 10) || 30));
+    const offset = (page - 1) * limit;
+
+    const where = ['1=1'];
+    const params = [];
+    let idx = 0;
+
+    if (status && status !== 'all') {
+      idx++;
+      where.push(`u.status = $${idx}`);
+      params.push(status);
+    }
+    if (search) {
+      idx++;
+      where.push(`(u.email ILIKE $${idx} OR u.full_name ILIKE $${idx} OR u.preferred_city ILIKE $${idx} OR u.phone ILIKE $${idx})`);
+      params.push(`%${search}%`);
+    }
+
+    const whereSql = where.join(' AND ');
+    const statsRes = await pool.query(`
+      SELECT
+        COUNT(*)::int AS total_users,
+        COUNT(*) FILTER (WHERE status = 'active')::int AS active_users,
+        COUNT(*) FILTER (WHERE status = 'blocked')::int AS blocked_users,
+        (SELECT COUNT(*)::int FROM user_applications) AS total_applications
+      FROM users
+    `);
+
+    const countRes = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM users u WHERE ${whereSql}`,
+      params
+    );
+
+    const listRes = await pool.query(
+      `SELECT
+         u.id, u.email, u.full_name, u.phone, u.preferred_city, u.bg_size, u.benefit_type,
+         u.move_in_date, u.personal_note, u.emphasize_direct_transfer, u.address_schufa_directly,
+         u.linked_portals, u.status, u.admin_note, u.last_login_at, u.created_at, u.updated_at,
+         COUNT(ua.id)::int AS applications_count,
+         COUNT(ua.id) FILTER (WHERE ua.status <> 'saved')::int AS contacted_count
+       FROM users u
+       LEFT JOIN user_applications ua ON ua.user_id = u.id
+       WHERE ${whereSql}
+       GROUP BY u.id
+       ORDER BY u.created_at DESC
+       LIMIT $${idx + 1} OFFSET $${idx + 2}`,
+      [...params, limit, offset]
+    );
+
+    return res.json({
+      stats: statsRes.rows[0],
+      total: countRes.rows[0]?.total || 0,
+      page,
+      limit,
+      users: listRes.rows.map((u) => sanitizeUser(u)),
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/users', async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body?.email);
+    const password = String(req.body?.password || '');
+    const fullName = String(req.body?.full_name || '').trim().slice(0, 150);
+    const phone = String(req.body?.phone || '').trim().slice(0, 60);
+    const preferredCity = String(req.body?.preferred_city || 'Gelsenkirchen').trim().slice(0, 100) || 'Gelsenkirchen';
+    const bgSize = Math.min(20, Math.max(1, parseInt(req.body?.bg_size || '1', 10) || 1));
+    const benefitType = req.body?.benefit_type === 'sgb12' ? 'sgb12' : 'sgb2';
+    const status = req.body?.status === 'blocked' ? 'blocked' : 'active';
+    const adminNote = req.body?.admin_note ? String(req.body.admin_note).trim() : null;
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'Bitte eine gültige E-Mail-Adresse eingeben.' });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Passwort muss mindestens 8 Zeichen lang sein.' });
+    }
+
+    const exists = await pool.query(`SELECT id FROM users WHERE LOWER(email) = LOWER($1)`, [email]);
+    if (exists.rows.length > 0) {
+      return res.status(409).json({ error: 'Diese E-Mail-Adresse existiert bereits.' });
+    }
+
+    const { rows } = await pool.query(
+      `INSERT INTO users (
+         email, password_hash, full_name, phone, preferred_city, bg_size, benefit_type,
+         linked_portals, status, admin_note
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
+       RETURNING *`,
+      [
+        email,
+        hashPassword(password),
+        fullName,
+        phone,
+        preferredCity,
+        bgSize,
+        benefitType,
+        JSON.stringify(normalizeLinkedPortals({})),
+        status,
+        adminNote,
+      ]
+    );
+
+    return res.status(201).json({ user: sanitizeUser(rows[0]) });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/users/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM users WHERE id = $1`, [req.params.id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Benutzer nicht gefunden.' });
+    }
+
+    const appsRes = await pool.query(
+      `SELECT
+         ua.id, ua.listing_id, ua.portal, ua.status AS application_status,
+         ua.message_text, ua.notes, ua.contacted_at, ua.created_at, ua.updated_at,
+         l.title, l.url, l.zipcode, l.district, l.calculated_bruttokalt
+       FROM user_applications ua
+       JOIN listings l ON l.id = ua.listing_id
+       WHERE ua.user_id = $1
+       ORDER BY ua.updated_at DESC`,
+      [req.params.id]
+    );
+
+    return res.json({
+      user: sanitizeUser(rows[0]),
+      applications: appsRes.rows,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch('/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rows: curRows } = await pool.query(`SELECT * FROM users WHERE id = $1`, [id]);
+    if (curRows.length === 0) {
+      return res.status(404).json({ error: 'Benutzer nicht gefunden.' });
+    }
+
+    const nextEmail =
+      req.body?.email !== undefined ? normalizeEmail(req.body.email) : null;
+    if (nextEmail !== null && !isValidEmail(nextEmail)) {
+      return res.status(400).json({ error: 'Ungültige E-Mail-Adresse.' });
+    }
+
+    const nextStatus =
+      req.body?.status !== undefined
+        ? req.body.status === 'blocked'
+          ? 'blocked'
+          : 'active'
+        : null;
+
+    const nextLinked =
+      req.body?.linked_portals !== undefined
+        ? JSON.stringify(normalizeLinkedPortals(req.body.linked_portals))
+        : null;
+
+    const { rows } = await pool.query(
+      `UPDATE users
+       SET email = COALESCE($1, email),
+           full_name = COALESCE($2, full_name),
+           phone = COALESCE($3, phone),
+           preferred_city = COALESCE($4, preferred_city),
+           bg_size = COALESCE($5, bg_size),
+           benefit_type = COALESCE($6, benefit_type),
+           status = COALESCE($7, status),
+           admin_note = CASE WHEN $8::boolean THEN $9 ELSE admin_note END,
+           linked_portals = COALESCE($10::jsonb, linked_portals),
+           updated_at = NOW()
+       WHERE id = $11
+       RETURNING *`,
+      [
+        nextEmail,
+        req.body?.full_name !== undefined ? String(req.body.full_name).trim().slice(0, 150) : null,
+        req.body?.phone !== undefined ? String(req.body.phone).trim().slice(0, 60) : null,
+        req.body?.preferred_city !== undefined ? String(req.body.preferred_city).trim().slice(0, 100) : null,
+        req.body?.bg_size !== undefined ? Math.min(20, Math.max(1, parseInt(req.body.bg_size, 10) || 1)) : null,
+        req.body?.benefit_type !== undefined ? (req.body.benefit_type === 'sgb12' ? 'sgb12' : 'sgb2') : null,
+        nextStatus,
+        Object.prototype.hasOwnProperty.call(req.body || {}, 'admin_note'),
+        req.body?.admin_note ? String(req.body.admin_note).trim() : null,
+        nextLinked,
+        id,
+      ]
+    );
+
+    return res.json({ user: sanitizeUser(rows[0]) });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/users/:id/reset-password', async (req, res) => {
+  try {
+    const newPassword = String(req.body?.new_password || '');
+    if (newPassword.length < 8) {
+      return res.status(400).json({ error: 'Das neue Passwort muss mindestens 8 Zeichen lang sein.' });
+    }
+    const { rowCount } = await pool.query(
+      `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
+      [hashPassword(newPassword), req.params.id]
+    );
+    if (rowCount === 0) {
+      return res.status(404).json({ error: 'Benutzer nicht gefunden.' });
+    }
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/users/:id', async (req, res) => {
+  try {
+    const { rowCount } = await pool.query(`DELETE FROM users WHERE id = $1`, [req.params.id]);
+    if (rowCount === 0) {
+      return res.status(404).json({ error: 'Benutzer nicht gefunden.' });
+    }
+    return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

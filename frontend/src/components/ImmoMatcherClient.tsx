@@ -9,6 +9,9 @@ import {
   Filter,
   Home,
   Info,
+  Lock,
+  LogIn,
+  LogOut,
   MapPin,
   Minus,
   Plus,
@@ -16,11 +19,20 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
+  User,
   UserCheck,
   Users,
 } from 'lucide-react';
-import type { KduRule, ListingItem, ListingsResponse } from '@/types/immo';
+import type {
+  KduRule,
+  ListingItem,
+  ListingsResponse,
+  UserApplication,
+  UserProfile,
+} from '@/types/immo';
 import { ApplicationModal } from './ApplicationModal';
+import { AuthModal } from './AuthModal';
+import { UserAreaView } from './UserAreaView';
 
 function formatEur(val: number | null | undefined): string {
   if (val === null || val === undefined || Number.isNaN(val)) return '–';
@@ -73,6 +85,97 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedListing, setSelectedListing] = useState<ListingItem | null>(null);
+
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [authLoaded, setAuthLoaded] = useState<boolean>(false);
+  const [applications, setApplications] = useState<UserApplication[]>([]);
+  const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
+  const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
+  const [activeView, setActiveView] = useState<'search' | 'account'>('search');
+
+  const fetchApplications = useCallback(async () => {
+    try {
+      const res = await fetch('/api/me/applications', {
+        cache: 'no-store',
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        setApplications([]);
+        return;
+      }
+      const json = await res.json();
+      setApplications(Array.isArray(json.applications) ? json.applications : []);
+    } catch {
+      setApplications([]);
+    }
+  }, []);
+
+  const loadSession = useCallback(async () => {
+    try {
+      const res = await fetch('/api/auth/me', {
+        cache: 'no-store',
+        credentials: 'include',
+      });
+      const json = await res.json();
+      if (json?.authenticated && json.user) {
+        setUser(json.user);
+        await fetchApplications();
+      } else {
+        setUser(null);
+        setApplications([]);
+      }
+    } catch {
+      setUser(null);
+      setApplications([]);
+    } finally {
+      setAuthLoaded(true);
+    }
+  }, [fetchApplications]);
+
+  useEffect(() => {
+    loadSession();
+  }, [loadSession]);
+
+  const handleAuthSuccess = async (loggedInUser: UserProfile) => {
+    setUser(loggedInUser);
+    if (loggedInUser.preferred_city && cities.includes(loggedInUser.preferred_city)) {
+      setCity(loggedInUser.preferred_city);
+    }
+    if (loggedInUser.bg_size) setBgSize(loggedInUser.bg_size);
+    if (loggedInUser.benefit_type) setBenefitType(loggedInUser.benefit_type);
+    setAuthModalOpen(false);
+    await fetchApplications();
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    } catch {
+      // ignore
+    }
+    setUser(null);
+    setApplications([]);
+    setActiveView('search');
+  };
+
+  const quickTrackContact = async (item: ListingItem) => {
+    if (!user) return;
+    try {
+      await fetch('/api/me/applications', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          listing_id: item.id,
+          status: 'contacted',
+        }),
+      });
+      await fetchApplications();
+    } catch {
+      // tracking best-effort
+    }
+    window.open(item.url, '_blank', 'noopener,noreferrer');
+  };
 
   const fetchListings = useCallback(async () => {
     setLoading(true);
@@ -128,6 +231,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
   };
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.limit)) : 1;
+  const applicationsByListingId = new Map(applications.map((a) => [a.listing_id, a]));
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -153,19 +257,136 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
             </div>
           </div>
 
-          <button
-            onClick={fetchListings}
-            disabled={loading}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-slate-700 hover:bg-slate-800 disabled:opacity-50"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">Aktualisieren</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {user ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setActiveView('search')}
+                  className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition ${
+                    activeView === 'search'
+                      ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40'
+                      : 'border border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800'
+                  }`}
+                >
+                  Wohnungssuche
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveView('account')}
+                  className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition ${
+                    activeView === 'account'
+                      ? 'bg-emerald-500 text-slate-950'
+                      : 'border border-slate-800 bg-slate-900 text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  <User className="h-3.5 w-3.5" />
+                  Mein Bereich ({applications.length})
+                </button>
+                <span className="hidden items-center rounded-xl border border-slate-800 bg-slate-900/70 px-2.5 py-2 text-xs text-slate-300 md:inline-flex">
+                  {user.email}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  title="Abmelden"
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-rose-500/40 hover:text-rose-200"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Abmelden</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthModalMode('login');
+                    setAuthModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
+                >
+                  <LogIn className="h-3.5 w-3.5 text-emerald-400" />
+                  Anmelden
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthModalMode('register');
+                    setAuthModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3 py-2 text-xs font-bold text-slate-950 transition hover:bg-emerald-400"
+                >
+                  Registrieren
+                </button>
+              </>
+            )}
+
+            <button
+              onClick={fetchListings}
+              disabled={loading}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-slate-700 hover:bg-slate-800 disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">Aktualisieren</span>
+            </button>
+          </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6 sm:py-8">
-        {/* Hero + Interactive Configurator */}
+        {activeView === 'account' && user ? (
+          <UserAreaView
+            user={user}
+            cities={cities}
+            applications={applications}
+            onUserUpdated={(updated) => setUser(updated)}
+            onApplicationsChanged={fetchApplications}
+            onBackToSearch={() => setActiveView('search')}
+          />
+        ) : (
+          <>
+            {authLoaded && !user && (
+              <div className="flex flex-col justify-between gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 sm:flex-row sm:items-center">
+                <div className="flex items-start gap-3">
+                  <Lock className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+                  <div>
+                    <div className="text-sm font-bold text-amber-200">
+                      Kontaktfunktion erfordert ein kostenloses Benutzerkonto
+                    </div>
+                    <p className="mt-0.5 text-xs text-slate-300">
+                      Du kannst alle KdU-Wohnungen frei ansehen. Um Vermieter zu kontaktieren,
+                      dein Schufa-Killer-Anschreiben zu speichern und Portale zu verknüpfen, melde
+                      dich kurz an oder registriere dich mit E-Mail &amp; Passwort.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthModalMode('login');
+                      setAuthModalOpen(true);
+                    }}
+                    className="rounded-xl border border-amber-400/40 bg-slate-950/70 px-3.5 py-2 text-xs font-semibold text-amber-200 transition hover:bg-slate-900"
+                  >
+                    Anmelden
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthModalMode('register');
+                      setAuthModalOpen(true);
+                    }}
+                    className="rounded-xl bg-emerald-500 px-3.5 py-2 text-xs font-bold text-slate-950 transition hover:bg-emerald-400"
+                  >
+                    Kostenlos registrieren
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Hero + Interactive Configurator */}
         <section className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 p-4 shadow-xl sm:p-6">
           <div className="mb-5 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
             <div>
@@ -591,25 +812,71 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                 </div>
 
                 {/* Actions */}
-                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedListing(item)}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3.5 py-2.5 text-xs font-bold text-amber-300 transition hover:bg-amber-500/20"
-                  >
-                    <ShieldCheck className="h-4 w-4" />
-                    Bewerbungstext generieren
-                  </button>
+                <div className="mt-4 space-y-2">
+                  {user && applicationsByListingId.get(item.id) && (
+                    <div className="flex items-center justify-between rounded-lg border border-sky-500/30 bg-sky-500/10 px-2.5 py-1 text-[11px] font-semibold text-sky-200">
+                      <span>Status in „Mein Bereich“:</span>
+                      <span className="uppercase">
+                        {applicationsByListingId.get(item.id)?.application_status === 'contacted'
+                          ? 'Kontaktiert ✓'
+                          : applicationsByListingId.get(item.id)?.application_status === 'saved'
+                            ? 'Vorgemerkt'
+                            : applicationsByListingId.get(item.id)?.application_status ===
+                                'viewing'
+                              ? 'Besichtigung'
+                              : applicationsByListingId.get(item.id)?.application_status ===
+                                  'accepted'
+                                ? 'Zusage'
+                                : 'Absage'}
+                      </span>
+                    </div>
+                  )}
 
-                  <a
-                    href={item.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-2.5 text-xs font-bold text-slate-950 transition hover:bg-emerald-400"
-                  >
-                    Original-Inserat &amp; Kontakt
-                    <ExternalLink className="h-3.5 w-3.5" />
-                  </a>
+                  {!user ? (
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        disabled
+                        aria-disabled="true"
+                        title="Bitte zuerst anmelden, um den Bewerbungstext & Kontakt zu nutzen"
+                        className="inline-flex cursor-not-allowed items-center justify-center gap-1.5 rounded-xl border border-slate-800 bg-slate-900/70 px-3.5 py-2.5 text-xs font-semibold text-slate-500 opacity-75"
+                      >
+                        <Lock className="h-3.5 w-3.5" />
+                        Bewerbungstext (Login nötig)
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled
+                        aria-disabled="true"
+                        title="Kontaktfunktion erfordert Login"
+                        className="inline-flex cursor-not-allowed items-center justify-center gap-1.5 rounded-xl border border-slate-800 bg-slate-900/70 px-3.5 py-2.5 text-xs font-semibold text-slate-500 opacity-75"
+                      >
+                        <Lock className="h-3.5 w-3.5" />
+                        Kontakt gesperrt (Login)
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedListing(item)}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3.5 py-2.5 text-xs font-bold text-amber-300 transition hover:bg-amber-500/20"
+                      >
+                        <ShieldCheck className="h-4 w-4" />
+                        Kontakt &amp; Bewerbung
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => quickTrackContact(item)}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-2.5 text-xs font-bold text-slate-950 transition hover:bg-emerald-400"
+                      >
+                        Original-Inserat &amp; Kontakt
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
                 </div>
               </article>
             ))}
@@ -662,6 +929,8 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
             </div>
           </div>
         </footer>
+          </>
+        )}
       </main>
 
       {selectedListing && (
@@ -670,7 +939,20 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
           rule={activeRule}
           bgSize={bgSize}
           benefitType={benefitType}
+          user={user}
+          existingApplication={applicationsByListingId.get(selectedListing.id) || null}
+          onTracked={fetchApplications}
+          onOpenUserArea={() => setActiveView('account')}
           onClose={() => setSelectedListing(null)}
+        />
+      )}
+
+      {authModalOpen && (
+        <AuthModal
+          initialMode={authModalMode}
+          cities={cities}
+          onSuccess={handleAuthSuccess}
+          onClose={() => setAuthModalOpen(false)}
         />
       )}
     </div>
