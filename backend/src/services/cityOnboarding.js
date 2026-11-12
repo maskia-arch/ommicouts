@@ -139,6 +139,26 @@ export async function generateSearchConfigsForCity(city, maxRentEur) {
   }
 
   candidates.push({
+    portal: 'other',
+    city: cleanCity,
+    name: `${cleanCity} Meinestadt.de (Mietwohnungen)`,
+    search_url: `https://www.meinestadt.de/${slug}/immobilien/wohnungen`,
+    cron_expression: '*/30 * * * *',
+    is_active: true,
+  });
+
+  if (state) {
+    candidates.push({
+      portal: 'other',
+      city: cleanCity,
+      name: `${cleanCity} Quoka.de (Mietwohnungen)`,
+      search_url: `https://www.quoka.de/anzeigen/immobilienmarkt/vermietungen/vermietung-wohnungen/${state}/${slug}/`,
+      cron_expression: '*/30 * * * *',
+      is_active: true,
+    });
+  }
+
+  candidates.push({
     portal: 'immoscout',
     city: cleanCity,
     name: `${cleanCity} ImmoScout24 (Optional mit Proxy aktivierbar, bis ${maxRent} EUR)`,

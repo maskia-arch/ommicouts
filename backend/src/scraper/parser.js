@@ -148,6 +148,11 @@ export function extractExternalId(url, portal = null) {
     if (match) return `ggw_${match[1]}`;
   }
 
+  if (cleanUrl.includes('quoka.de')) {
+    const match = cleanUrl.match(/\/([a-z0-9]{12,40})\.html(?:\?.*)?$/i);
+    if (match) return `qk_${match[1].toLowerCase()}`;
+  }
+
   const hash = crypto.createHash('sha1').update(cleanUrl).digest('hex').slice(0, 14);
   const prefix =
     resolvedPortal === 'kleinanzeigen'
@@ -451,6 +456,31 @@ export function extractSearchListingLinks(html, baseUrl, portal, defaultCity = '
     return found;
   }
 
+  if (String(baseUrl || '').includes('meinestadt.de')) {
+    $('a[href*="immowelt.de/expose/"]').each((_, el) => {
+      const href = $(el).attr('href') || '';
+      const cleanExpose = normalizeListingUrl(href.split('?')[0]);
+      if (/immowelt\.de\/expose\/[a-z0-9_-]+/i.test(cleanExpose)) {
+        pushCandidate(cleanExpose, { title: $(el).text().trim() });
+      }
+    });
+    const rawMatches = String(html || '').match(/https?:\/\/[^"'\s>]*immowelt\.de\/expose\/[a-z0-9_-]+/gi) || [];
+    for (const raw of rawMatches) {
+      pushCandidate(raw, {});
+    }
+    return found;
+  }
+
+  if (String(baseUrl || '').includes('quoka.de')) {
+    $('a[href*="/anzeige/"]').each((_, el) => {
+      const href = $(el).attr('href') || '';
+      if (/\/anzeige\/.+\/[a-z0-9]+\.html/i.test(href)) {
+        pushCandidate(href, { title: $(el).text().trim() });
+      }
+    });
+    return found;
+  }
+
   // Other portals: JSON-LD + __NEXT_DATA__ + DOM
   for (const ld of collectJsonLd($)) {
     if (ld.url) pushCandidate(ld.url, { title: ld.name });
@@ -567,6 +597,7 @@ export function detectPrivateLandlord({
   if (
     combinedSeller.includes('private') ||
     combinedSeller.includes('privat') ||
+    sellerTypeRaw.toLowerCase().includes('person') ||
     sellerTypeRaw.toLowerCase() === 'private'
   ) {
     if (!COMMERCIAL_KEYWORDS.some((kw) => sellerName.toLowerCase().includes(kw))) {
@@ -959,6 +990,21 @@ export function parseListingDetail(html, url, portal = null, defaultCity = 'Gels
     if (ld.numberOfRooms && rooms === null) {
       rooms = parseGermanNumber(ld.numberOfRooms);
     }
+    if (Array.isArray(ld.additionalProperty)) {
+      for (const prop of ld.additionalProperty) {
+        const pName = String(prop?.name || '').toLowerCase();
+        const pVal = prop?.value;
+        if (!pVal) continue;
+        if (pName === 'plz' && !zipcode) {
+          const zMatch = String(pVal).match(/\b(\d{5})\b/);
+          if (zMatch) zipcode = zMatch[1];
+        } else if (pName.includes('zimmer') && rooms === null) {
+          rooms = parseGermanNumber(pVal);
+        } else if ((pName.includes('wohnfl') || pName.includes('qm')) && sqm === null) {
+          sqm = parseGermanNumber(pVal);
+        }
+      }
+    }
     if (ld.address) {
       if (ld.address.postalCode && !zipcode) zipcode = String(ld.address.postalCode).trim();
       if (ld.address.addressLocality) {
@@ -1098,17 +1144,29 @@ export function isListingOfflineHtml(html, finalUrl, statusCode, portal) {
   if (lowerUrl.includes('ggw-gelsenkirchen.de/mietangebote')) {
     return { offline: true, reason: 'Redirect zur GGW-Übersicht' };
   }
+  if (
+    lowerUrl.includes('quoka.de/') &&
+    (lowerUrl.includes('/error/notfound') ||
+      (lowerUrl.includes('/vermietung-wohnungen/') && !lowerUrl.includes('/anzeige/')))
+  ) {
+    return { offline: true, reason: 'Redirect zur Quoka-Übersicht / 404' };
+  }
 
   const lowerHtml = String(html || '').toLowerCase();
   const offlineMarkers = [
     'anzeige nicht mehr verfügbar',
     'anzeige ist nicht mehr verfügbar',
+    'anzeige ist leider nicht mehr verfügbar',
+    'diese anzeige existiert nicht mehr',
+    'anzeige ist nicht mehr aktiv',
     'anzeige wurde gelöscht',
     'anzeige ist deaktiviert',
     'dieses angebot ist leider nicht mehr verfügbar',
     'leider wurde die gesuchte anzeige nicht gefunden',
+    'leider wurde keine anzeige gefunden',
     'objekt ist nicht mehr verfügbar',
     'expose nicht gefunden',
+    '404 page - quoka',
     'status-deleted',
   ];
 
@@ -1147,7 +1205,8 @@ export function extractUrlsFromWebhookPayload(payload) {
       (lower.includes('immowelt.de') && lower.includes('/expose/')) ||
       (lower.includes('immobilienscout24.de') && lower.includes('/expose/')) ||
       (lower.includes('ohne-makler.net') && /\/immobilie\/(?!list\b)[a-z0-9]+/i.test(lower)) ||
-      (lower.includes('ggw-gelsenkirchen.de') && /\/object\/\d+/i.test(lower));
+      (lower.includes('ggw-gelsenkirchen.de') && /\/object\/\d+/i.test(lower)) ||
+      (lower.includes('quoka.de') && /\/anzeige\/.+\/[a-z0-9]+\.html/i.test(lower));
 
     if (isSupportedListing) {
       cleaned.add(normalizeListingUrl(trimmed));

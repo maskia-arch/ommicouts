@@ -30,6 +30,10 @@ const OHNE_MAKLER_GE_URL =
   'https://www.ohne-makler.net/immobilien/wohnung-mieten/nordrhein-westfalen/gelsenkirchen/';
 const GGW_GE_URL =
   'https://www.ggw-gelsenkirchen.de/mietangebote/?rooms=1&size=20&price=850';
+const MEINESTADT_GE_URL =
+  'https://www.meinestadt.de/gelsenkirchen/immobilien/wohnungen';
+const QUOKA_GE_URL =
+  'https://www.quoka.de/anzeigen/immobilienmarkt/vermietungen/vermietung-wohnungen/nordrhein-westfalen/gelsenkirchen/';
 const IMMOSCOUT_GE_URL =
   'https://www.immobilienscout24.de/Suche/de/nordrhein-westfalen/gelsenkirchen/wohnung-mieten?price=-850.0&sorting=2';
 
@@ -232,6 +236,28 @@ FROM (
         'ggw'
     ),
     (
+        'other',
+        'Gelsenkirchen',
+        'Meinestadt.de Gelsenkirchen (Mietwohnungen)',
+        '${MEINESTADT_GE_URL}',
+        '*/30 * * * *',
+        4000,
+        15000,
+        TRUE,
+        'meinestadt'
+    ),
+    (
+        'other',
+        'Gelsenkirchen',
+        'Quoka.de Gelsenkirchen (Mietwohnungen)',
+        '${QUOKA_GE_URL}',
+        '*/30 * * * *',
+        4000,
+        15000,
+        TRUE,
+        'quoka'
+    ),
+    (
         'immoscout',
         'Gelsenkirchen',
         'ImmoScout24 Gelsenkirchen (Optional mit Wohn-Proxy aktivierbar, bis 850 EUR)',
@@ -254,6 +280,8 @@ WHERE NOT EXISTS (
       (v.seed_kind = 'iw_all') OR
       (v.seed_kind = 'ohne_makler' AND sc.search_url LIKE '%ohne-makler.net%') OR
       (v.seed_kind = 'ggw' AND sc.search_url LIKE '%ggw-gelsenkirchen.de%') OR
+      (v.seed_kind = 'meinestadt' AND sc.search_url LIKE '%meinestadt.de%') OR
+      (v.seed_kind = 'quoka' AND sc.search_url LIKE '%quoka.de%') OR
       (v.seed_kind = 'immoscout')
     )
 )

@@ -5,6 +5,10 @@ import {
   extractContactInfo,
   detectDistrict,
   resolveDistrictByZip,
+  extractExternalId,
+  extractSearchListingLinks,
+  parseListingDetail,
+  isListingOfflineHtml,
 } from '../src/scraper/parser.js';
 import {
   generateOrgLicenseKey,
@@ -336,5 +340,69 @@ test('detectDistrict and resolveDistrictByZip map Gelsenkirchen ZIPs accurately 
   assert.equal(
     resolveDistrictByZip('Schalke-Nord', 'Wohnung in Schalke-Nord', 'Gelsenkirchen', '45881'),
     'Schalke-Nord'
+  );
+});
+
+test('meinestadt.de and quoka.de extraction, detail parsing, and offline detection work cleanly', () => {
+  const msHtml = `
+    <a href="https://www.immowelt.de/expose/26p6gd75fur9?utm_source=meinestadt&utm_medium=referral">Wohnung</a>
+  `;
+  const msLinks = extractSearchListingLinks(
+    msHtml,
+    'https://www.meinestadt.de/gelsenkirchen/immobilien/wohnungen',
+    'other'
+  );
+  assert.equal(msLinks.length, 1);
+  assert.equal(msLinks[0].url, 'https://www.immowelt.de/expose/26p6gd75fur9');
+  assert.equal(extractExternalId(msLinks[0].url), 'iw_26p6gd75fur9');
+
+  const qkListHtml = `
+    <a href="/anzeigen/immobilienmarkt/vermietungen/vermietung-wohnungen/anzeige/helle-2-zi-wohnung/02hd5e891f8d797g2546fi39igg32e79.html">Helle 2-Zi Wohnung</a>
+  `;
+  const qkLinks = extractSearchListingLinks(
+    qkListHtml,
+    'https://www.quoka.de/anzeigen/immobilienmarkt/vermietungen/vermietung-wohnungen/nordrhein-westfalen/gelsenkirchen/',
+    'other'
+  );
+  assert.equal(qkLinks.length, 1);
+  assert.equal(extractExternalId(qkLinks[0].url), 'qk_02hd5e891f8d797g2546fi39igg32e79');
+
+  const qkDetailHtml = `
+    <html><head>
+      <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@type": "Product",
+          "name": "Helle 2-Zi Wohnung in Buer",
+          "description": "Schöne Wohnung, Kaltmiete 380 Euro, NK 90 Euro",
+          "additionalProperty": [
+            { "@type": "PropertyValue", "name": "PLZ", "value": "45894" },
+            { "@type": "PropertyValue", "name": "Zimmerzahl", "value": "2" },
+            { "@type": "PropertyValue", "name": "Wohnfläche (qm)", "value": "54.5" }
+          ],
+          "offers": {
+            "@type": "Offer",
+            "price": "380.00",
+            "seller": { "@type": "Person", "name": "Max Mustermann" }
+          }
+        }
+      </script>
+    </head><body><h1>Helle 2-Zi Wohnung in Buer</h1></body></html>
+  `;
+  const parsed = parseListingDetail(qkDetailHtml, qkLinks[0].url, 'other', 'Gelsenkirchen');
+  assert.equal(parsed.zipcode, '45894');
+  assert.equal(parsed.district, 'Buer');
+  assert.equal(parsed.sqm, 54.5);
+  assert.equal(parsed.rooms, 2);
+  assert.equal(parsed.cold_rent, 380);
+  assert.equal(parsed.is_private_landlord, true);
+
+  assert.equal(
+    isListingOfflineHtml('', 'https://www.quoka.de/Error/NotFound', 200, 'other').offline,
+    true
+  );
+  assert.equal(
+    isListingOfflineHtml('<h1>404</h1>', 'https://www.quoka.de/anzeige/x/123.html', 404, 'other').offline,
+    true
   );
 });
