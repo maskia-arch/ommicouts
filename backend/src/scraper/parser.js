@@ -1,10 +1,27 @@
 import crypto from 'node:crypto';
 import * as cheerio from 'cheerio';
 
+export const GELSENKIRCHEN_ZIP_DISTRICTS = {
+  '45879': ['Altstadt', 'Neustadt'],
+  '45881': ['Schalke', 'Schalke-Nord'],
+  '45883': ['Feldmark', 'Heßler'],
+  '45884': ['Rotthausen'],
+  '45886': ['Ückendorf'],
+  '45888': ['Bulmke-Hüllen'],
+  '45889': ['Bismarck'],
+  '45891': ['Erle'],
+  '45892': ['Resse', 'Resser Mark'],
+  '45894': ['Buer'],
+  '45896': ['Scholven', 'Hassel', 'Horst'],
+  '45897': ['Buer-Nord', 'Hassel'],
+  '45899': ['Beckhausen', 'Horst'],
+};
+
 const GELSENKIRCHEN_DISTRICTS = [
   'Schalke-Nord',
   'Bulmke-Hüllen',
   'Resser Mark',
+  'Buer-Nord',
   'Beckhausen',
   'Ückendorf',
   'Rotthausen',
@@ -462,20 +479,58 @@ export function extractSearchListingLinks(html, baseUrl, portal, defaultCity = '
   return found;
 }
 
-export function detectDistrict(text, fallbackCity = 'Gelsenkirchen') {
+function matchDistrictList(text, candidates) {
   if (!text) return null;
   const normalized = String(text);
-  for (const d of GELSENKIRCHEN_DISTRICTS) {
+  for (const d of candidates) {
     const regex = new RegExp(`\\b${d.replace('-', '[-\\s]?')}\\b`, 'i');
     if (regex.test(normalized)) {
       if (d === 'Hessler') return 'Heßler';
       return d;
     }
+    if (d === 'Heßler' && /\bHessler\b/i.test(normalized)) {
+      return 'Heßler';
+    }
   }
-  if (normalized.toLowerCase().includes(fallbackCity.toLowerCase())) {
+  return null;
+}
+
+export function detectDistrict(text, fallbackCity = 'Gelsenkirchen', zipcode = null) {
+  const zipCandidates =
+    fallbackCity.toLowerCase() === 'gelsenkirchen' && zipcode
+      ? GELSENKIRCHEN_ZIP_DISTRICTS[String(zipcode).trim()] || null
+      : null;
+
+  if (zipCandidates) {
+    const matched = matchDistrictList(text, zipCandidates);
+    return matched || zipCandidates[0];
+  }
+
+  if (!text) return null;
+  const matched = matchDistrictList(text, GELSENKIRCHEN_DISTRICTS);
+  if (matched) return matched;
+
+  if (String(text).toLowerCase().includes(fallbackCity.toLowerCase())) {
     return fallbackCity;
   }
   return null;
+}
+
+export function resolveDistrictByZip(detectedDistrict, contextText, fallbackCity = 'Gelsenkirchen', zipcode = null) {
+  const cleanZip = zipcode ? String(zipcode).trim() : null;
+  const zipCandidates =
+    fallbackCity.toLowerCase() === 'gelsenkirchen' && cleanZip
+      ? GELSENKIRCHEN_ZIP_DISTRICTS[cleanZip] || null
+      : null;
+
+  if (zipCandidates) {
+    if (detectedDistrict && zipCandidates.includes(detectedDistrict)) {
+      return detectedDistrict;
+    }
+    return detectDistrict(contextText, fallbackCity, cleanZip);
+  }
+
+  return detectedDistrict || detectDistrict(contextText, fallbackCity, cleanZip) || fallbackCity;
 }
 
 export function detectZipcode(text) {
@@ -980,7 +1035,7 @@ export function parseListingDetail(html, url, portal = null, defaultCity = 'Gels
   if (sqm === null) sqm = regexParsed.sqm;
   if (rooms === null) rooms = regexParsed.rooms;
   if (!zipcode) zipcode = detectZipcode(`${localityRaw} ${fullText}`);
-  if (!district) district = detectDistrict(`${localityRaw} ${fullText}`, defaultCity);
+  district = resolveDistrictByZip(district, `${localityRaw} ${title}`, defaultCity, zipcode);
 
   const isPrivateLandlord = detectPrivateLandlord({
     sellerTypeRaw,

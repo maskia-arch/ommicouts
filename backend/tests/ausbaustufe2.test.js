@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as cheerio from 'cheerio';
-import { extractContactInfo } from '../src/scraper/parser.js';
+import {
+  extractContactInfo,
+  detectDistrict,
+  resolveDistrictByZip,
+} from '../src/scraper/parser.js';
 import {
   generateOrgLicenseKey,
   normalizeOrgKeyInput,
@@ -316,4 +320,21 @@ test('buildListingChangeEvents detects price drop/increase, offline transition, 
 
   // Identical listing produces no events
   assert.deepEqual(buildListingChangeEvents(base, { ...base }), []);
+});
+
+test('detectDistrict and resolveDistrictByZip map Gelsenkirchen ZIPs accurately and prevent text false positives', () => {
+  assert.equal(detectDistrict('45884 Gelsenkirchen', 'Gelsenkirchen', '45884'), 'Rotthausen');
+  assert.equal(detectDistrict('45886 Gelsenkirchen', 'Gelsenkirchen', '45886'), 'Ückendorf');
+  assert.equal(detectDistrict('45879 Gelsenkirchen Neustadt', 'Gelsenkirchen', '45879'), 'Neustadt');
+  assert.equal(detectDistrict('45897 Gelsenkirchen', 'Gelsenkirchen', '45897'), 'Buer-Nord');
+  // Prevent false positive when Erle (45891) mentions Schalke in description
+  assert.equal(
+    resolveDistrictByZip('Schalke', 'Schöne Wohnung nahe Schalke-Arena', 'Gelsenkirchen', '45891'),
+    'Erle'
+  );
+  // Keep valid matching district within multi-district ZIP
+  assert.equal(
+    resolveDistrictByZip('Schalke-Nord', 'Wohnung in Schalke-Nord', 'Gelsenkirchen', '45881'),
+    'Schalke-Nord'
+  );
 });

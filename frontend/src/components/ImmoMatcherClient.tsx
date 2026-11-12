@@ -26,7 +26,6 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
-  Search,
   ShieldCheck,
   Sparkles,
   Trash2,
@@ -57,6 +56,28 @@ const APP_STATUS_OPTIONS: Array<{ value: ApplicationStatus; label: string }> = [
   { value: 'viewing', label: 'Besichtigung' },
   { value: 'accepted', label: 'Zusage' },
   { value: 'rejected', label: 'Absage' },
+];
+
+const GELSENKIRCHEN_DISTRICT_MENU: Array<{ name: string; zip: string }> = [
+  { name: 'Altstadt', zip: '45879' },
+  { name: 'Neustadt', zip: '45879' },
+  { name: 'Schalke', zip: '45881' },
+  { name: 'Schalke-Nord', zip: '45881' },
+  { name: 'Feldmark', zip: '45883' },
+  { name: 'Heßler', zip: '45883' },
+  { name: 'Rotthausen', zip: '45884' },
+  { name: 'Ückendorf', zip: '45886' },
+  { name: 'Bulmke-Hüllen', zip: '45888' },
+  { name: 'Bismarck', zip: '45889' },
+  { name: 'Erle', zip: '45891' },
+  { name: 'Resse', zip: '45892' },
+  { name: 'Resser Mark', zip: '45892' },
+  { name: 'Buer', zip: '45894' },
+  { name: 'Scholven', zip: '45896' },
+  { name: 'Hassel', zip: '45896/97' },
+  { name: 'Buer-Nord', zip: '45897' },
+  { name: 'Horst', zip: '45896/99' },
+  { name: 'Beckhausen', zip: '45899' },
 ];
 
 function formatEur(val: number | null | undefined): string {
@@ -103,7 +124,6 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
   const [district, setDistrict] = useState<string>('all');
   const [wbs, setWbs] = useState<'all' | 'without' | 'only'>('all');
   const [sort, setSort] = useState<'newest' | 'cheapest' | 'largest'>('newest');
-  const [search, setSearch] = useState<string>('');
   const [page, setPage] = useState<number>(1);
 
   const [data, setData] = useState<ListingsResponse | null>(initialData);
@@ -378,7 +398,6 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
         page: String(page),
         limit: '24',
       });
-      if (search.trim()) params.set('search', search.trim());
 
       const res = await fetch(`/api/listings?${params.toString()}`, { cache: 'no-store' });
       const json = await res.json();
@@ -391,7 +410,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
     } finally {
       setLoading(false);
     }
-  }, [city, bgSize, benefitType, privateOnly, includeTolerance, district, wbs, sort, search, page]);
+  }, [city, bgSize, benefitType, privateOnly, includeTolerance, district, wbs, sort, page]);
 
   useEffect(() => {
     fetchListings();
@@ -913,67 +932,145 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
           </div>
         </section>
 
-        {/* Secondary Filter Bar */}
-        <section className="flex flex-col gap-3 rounded-2xl border border-slate-800/80 bg-slate-900/60 p-3.5 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setPage(1);
-              }}
-              placeholder="Suche nach Titel, Stadtteil (z. B. Schalke, Buer) oder PLZ..."
-              className="w-full rounded-xl border border-slate-800 bg-slate-950 py-2 pl-9 pr-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
-            />
+        {/* Klickbares Stadt- & Stadtteil-Menü + Filter */}
+        <section className="space-y-3 rounded-2xl border border-slate-800/80 bg-slate-900/60 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                <MapPin className="h-3.5 w-3.5 text-emerald-400" />
+                1. Stadt:
+              </span>
+              {cities.map((c) => {
+                const isSelectedCity = city === c;
+                return (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => {
+                      setCity(c);
+                      setDistrict('all');
+                      setPage(1);
+                    }}
+                    className={`rounded-xl px-3.5 py-1.5 text-xs font-bold transition ${
+                      isSelectedCity
+                        ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                        : 'border border-slate-700 bg-slate-950 text-slate-300 hover:border-emerald-500/40 hover:text-white'
+                    }`}
+                  >
+                    {c}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                <Filter className="h-3.5 w-3.5" />
+              </div>
+              <select
+                value={wbs}
+                onChange={(e) => {
+                  setWbs(e.target.value as 'all' | 'without' | 'only');
+                  setPage(1);
+                }}
+                className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs font-medium text-slate-200 focus:border-emerald-500 focus:outline-none"
+              >
+                <option value="all">WBS: Alle</option>
+                <option value="without">Nur ohne WBS</option>
+                <option value="only">Nur mit WBS</option>
+              </select>
+
+              <select
+                value={sort}
+                onChange={(e) => {
+                  setSort(e.target.value as 'newest' | 'cheapest' | 'largest');
+                  setPage(1);
+                }}
+                className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs font-medium text-slate-200 focus:border-emerald-500 focus:outline-none"
+              >
+                <option value="newest">Neueste zuerst</option>
+                <option value="cheapest">Günstigste Bruttokalt</option>
+                <option value="largest">Größte m²</option>
+              </select>
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1.5 text-xs text-slate-400">
-              <Filter className="h-3.5 w-3.5" />
+          <div className="border-t border-slate-800/80 pt-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                2. Stadtteil in {city} wählen:
+              </span>
+              {district !== 'all' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDistrict('all');
+                    setPage(1);
+                  }}
+                  className="text-xs font-medium text-emerald-300 hover:text-emerald-200"
+                >
+                  Auswahl zurücksetzen ({district})
+                </button>
+              )}
             </div>
-            <select
-              value={district}
-              onChange={(e) => {
-                setDistrict(e.target.value);
-                setPage(1);
-              }}
-              className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs font-medium text-slate-200 focus:border-emerald-500 focus:outline-none"
-            >
-              <option value="all">Alle Stadtteile</option>
-              {(data?.districts || []).map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
 
-            <select
-              value={wbs}
-              onChange={(e) => {
-                setWbs(e.target.value as 'all' | 'without' | 'only');
-                setPage(1);
-              }}
-              className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs font-medium text-slate-200 focus:border-emerald-500 focus:outline-none"
-            >
-              <option value="all">WBS: Alle</option>
-              <option value="without">Nur ohne WBS</option>
-              <option value="only">Nur mit WBS</option>
-            </select>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setDistrict('all');
+                  setPage(1);
+                }}
+                className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
+                  district === 'all'
+                    ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/50'
+                    : 'border border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700 hover:text-white'
+                }`}
+              >
+                Alle Stadtteile
+              </button>
 
-            <select
-              value={sort}
-              onChange={(e) => {
-                setSort(e.target.value as 'newest' | 'cheapest' | 'largest');
-                setPage(1);
-              }}
-              className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs font-medium text-slate-200 focus:border-emerald-500 focus:outline-none"
-            >
-              <option value="newest">Neueste zuerst</option>
-              <option value="cheapest">Günstigste Bruttokalt</option>
-              <option value="largest">Größte m²</option>
-            </select>
+              {(city.toLowerCase() === 'gelsenkirchen'
+                ? (() => {
+                    const knownNames = new Set(GELSENKIRCHEN_DISTRICT_MENU.map((x) => x.name));
+                    const extra = (data?.districts || [])
+                      .filter((d) => d && d !== 'Gelsenkirchen' && !knownNames.has(d))
+                      .map((d) => ({ name: d, zip: '' }));
+                    return [...GELSENKIRCHEN_DISTRICT_MENU, ...extra];
+                  })()
+                : (data?.districts || [])
+                    .filter((d) => d && d.toLowerCase() !== city.toLowerCase())
+                    .map((d) => ({ name: d, zip: '' }))
+              ).map((entry) => {
+                const active = district.toLowerCase() === entry.name.toLowerCase();
+                return (
+                  <button
+                    key={entry.name}
+                    type="button"
+                    onClick={() => {
+                      setDistrict(active ? 'all' : entry.name);
+                      setPage(1);
+                    }}
+                    className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
+                      active
+                        ? 'bg-emerald-500 text-slate-950 font-bold'
+                        : 'border border-slate-800 bg-slate-950/90 text-slate-300 hover:border-emerald-500/40 hover:text-white'
+                    }`}
+                  >
+                    <span>{entry.name}</span>
+                    {entry.zip && (
+                      <span
+                        className={`text-[10px] ${
+                          active ? 'text-slate-900/80' : 'text-slate-500'
+                        }`}
+                      >
+                        {entry.zip}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </section>
 

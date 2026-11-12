@@ -431,10 +431,30 @@ export async function cleanupInvalidListings() {
   const { deduplicateActiveListings } = await import('./services/deduplicator.js');
   const dedup = await deduplicateActiveListings();
 
+  const { GELSENKIRCHEN_ZIP_DISTRICTS, resolveDistrictByZip } = await import('./scraper/parser.js');
+  const { rows: geListings } = await pool.query(
+    `SELECT id, title, district, zipcode
+     FROM listings
+     WHERE LOWER(city) = 'gelsenkirchen' AND zipcode IS NOT NULL`
+  );
+  let normalizedDistricts = 0;
+  for (const row of geListings) {
+    const allowed = GELSENKIRCHEN_ZIP_DISTRICTS[String(row.zipcode).trim()];
+    if (!allowed) continue;
+    if (!row.district || !allowed.includes(row.district)) {
+      const nextDistrict = resolveDistrictByZip(row.district, row.title, 'Gelsenkirchen', row.zipcode);
+      if (nextDistrict && nextDistrict !== row.district) {
+        await pool.query(`UPDATE listings SET district = $1 WHERE id = $2`, [nextDistrict, row.id]);
+        normalizedDistricts++;
+      }
+    }
+  }
+
   const countRes = await pool.query(`SELECT COUNT(*)::int AS remaining FROM listings WHERE status = 'active'`);
   return {
     deletedCount: rowCount || 0,
     deduplicatedCount: dedup.deduplicatedCount || 0,
+    normalizedDistricts,
     remainingCount: countRes.rows[0]?.remaining || 0,
   };
 }
