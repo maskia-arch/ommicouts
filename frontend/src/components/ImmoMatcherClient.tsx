@@ -898,69 +898,26 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
           </div>
         </section>
 
-        {/* Transparenz-Ampel Banner */}
-        <section className="rounded-2xl border border-emerald-500/30 bg-emerald-950/30 p-4 sm:px-6">
-          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-            <div className="flex items-start gap-3">
-              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
-              <div>
-                <p className="text-sm font-bold text-emerald-200 sm:text-base">
-                  Dein Limit in {city} bei {bgSize}{' '}
-                  {bgSize === 1 ? 'Person' : 'Personen'}: max. {activeRule.max_sqm} m² &amp;{' '}
-                  <span className="text-white underline decoration-emerald-400 underline-offset-4">
-                    {formatEur(activeRule.max_bruttokalt_eur)} Bruttokaltmiete
-                  </span>
-                </p>
-                <p className="mt-0.5 text-xs text-emerald-300/80">
-                  Bruttokaltmiete = Kaltmiete + kalte Betriebskosten (ohne Heizkosten).
-                  {includeTolerance && data?.tolerance_limit_eur
-                    ? ` Mit +10 % Toleranz bis ${formatEur(data.tolerance_limit_eur)}.`
-                    : ' Nach BSG-Produkttheorie zählt primär die Gesamtsumme Bruttokalt.'}
-                </p>
-              </div>
-            </div>
-            {data && (
-              <div className="flex shrink-0 items-center gap-2 text-xs">
-                <span className="rounded-lg bg-slate-900/90 px-3 py-1.5 font-semibold text-white ring-1 ring-slate-700">
-                  {data.total} Treffer
-                </span>
-                <span className="rounded-lg bg-amber-500/15 px-3 py-1.5 font-semibold text-amber-300 ring-1 ring-amber-500/30">
-                  {data.private_count} Privat
-                </span>
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* Klickbares Stadt- & Stadtteil-Menü + Filter */}
+        {/* Klickbares Stadtteil-Menü + Filteroptionen (über dem Limit-Banner) */}
         <section className="space-y-3 rounded-2xl border border-slate-800/80 bg-slate-900/60 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
                 <MapPin className="h-3.5 w-3.5 text-emerald-400" />
-                1. Stadt:
+                Stadtteil in {city} wählen:
               </span>
-              {cities.map((c) => {
-                const isSelectedCity = city === c;
-                return (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => {
-                      setCity(c);
-                      setDistrict('all');
-                      setPage(1);
-                    }}
-                    className={`rounded-xl px-3.5 py-1.5 text-xs font-bold transition ${
-                      isSelectedCity
-                        ? 'bg-emerald-500 text-slate-950 shadow-sm'
-                        : 'border border-slate-700 bg-slate-950 text-slate-300 hover:border-emerald-500/40 hover:text-white'
-                    }`}
-                  >
-                    {c}
-                  </button>
-                );
-              })}
+              {district !== 'all' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDistrict('all');
+                    setPage(1);
+                  }}
+                  className="text-xs font-medium text-emerald-300 hover:text-emerald-200"
+                >
+                  Zurücksetzen ({district})
+                </button>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -995,82 +952,96 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
             </div>
           </div>
 
-          <div className="border-t border-slate-800/80 pt-3">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                2. Stadtteil in {city} wählen:
-              </span>
-              {district !== 'all' && (
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setDistrict('all');
+                setPage(1);
+              }}
+              className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
+                district === 'all'
+                  ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/50'
+                  : 'border border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700 hover:text-white'
+              }`}
+            >
+              Alle Stadtteile
+            </button>
+
+            {(city.toLowerCase() === 'gelsenkirchen'
+              ? (() => {
+                  const knownNames = new Set(GELSENKIRCHEN_DISTRICT_MENU.map((x) => x.name));
+                  const extra = (data?.districts || [])
+                    .filter((d) => d && d !== 'Gelsenkirchen' && !knownNames.has(d))
+                    .map((d) => ({ name: d, zip: '' }));
+                  return [...GELSENKIRCHEN_DISTRICT_MENU, ...extra];
+                })()
+              : (data?.districts || [])
+                  .filter((d) => d && d.toLowerCase() !== city.toLowerCase())
+                  .map((d) => ({ name: d, zip: '' }))
+            ).map((entry) => {
+              const active = district.toLowerCase() === entry.name.toLowerCase();
+              return (
                 <button
+                  key={entry.name}
                   type="button"
                   onClick={() => {
-                    setDistrict('all');
+                    setDistrict(active ? 'all' : entry.name);
                     setPage(1);
                   }}
-                  className="text-xs font-medium text-emerald-300 hover:text-emerald-200"
+                  className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
+                    active
+                      ? 'bg-emerald-500 text-slate-950 font-bold'
+                      : 'border border-slate-800 bg-slate-950/90 text-slate-300 hover:border-emerald-500/40 hover:text-white'
+                  }`}
                 >
-                  Auswahl zurücksetzen ({district})
+                  <span>{entry.name}</span>
+                  {entry.zip && (
+                    <span
+                      className={`text-[10px] ${
+                        active ? 'text-slate-900/80' : 'text-slate-500'
+                      }`}
+                    >
+                      {entry.zip}
+                    </span>
+                  )}
                 </button>
-              )}
-            </div>
+              );
+            })}
+          </div>
+        </section>
 
-            <div className="flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setDistrict('all');
-                  setPage(1);
-                }}
-                className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
-                  district === 'all'
-                    ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/50'
-                    : 'border border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700 hover:text-white'
-                }`}
-              >
-                Alle Stadtteile
-              </button>
-
-              {(city.toLowerCase() === 'gelsenkirchen'
-                ? (() => {
-                    const knownNames = new Set(GELSENKIRCHEN_DISTRICT_MENU.map((x) => x.name));
-                    const extra = (data?.districts || [])
-                      .filter((d) => d && d !== 'Gelsenkirchen' && !knownNames.has(d))
-                      .map((d) => ({ name: d, zip: '' }));
-                    return [...GELSENKIRCHEN_DISTRICT_MENU, ...extra];
-                  })()
-                : (data?.districts || [])
-                    .filter((d) => d && d.toLowerCase() !== city.toLowerCase())
-                    .map((d) => ({ name: d, zip: '' }))
-              ).map((entry) => {
-                const active = district.toLowerCase() === entry.name.toLowerCase();
-                return (
-                  <button
-                    key={entry.name}
-                    type="button"
-                    onClick={() => {
-                      setDistrict(active ? 'all' : entry.name);
-                      setPage(1);
-                    }}
-                    className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
-                      active
-                        ? 'bg-emerald-500 text-slate-950 font-bold'
-                        : 'border border-slate-800 bg-slate-950/90 text-slate-300 hover:border-emerald-500/40 hover:text-white'
-                    }`}
-                  >
-                    <span>{entry.name}</span>
-                    {entry.zip && (
-                      <span
-                        className={`text-[10px] ${
-                          active ? 'text-slate-900/80' : 'text-slate-500'
-                        }`}
-                      >
-                        {entry.zip}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
+        {/* Transparenz-Ampel Banner */}
+        <section className="rounded-2xl border border-emerald-500/30 bg-emerald-950/30 p-4 sm:px-6">
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+            <div className="flex items-start gap-3">
+              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
+              <div>
+                <p className="text-sm font-bold text-emerald-200 sm:text-base">
+                  Dein Limit in {city} bei {bgSize}{' '}
+                  {bgSize === 1 ? 'Person' : 'Personen'}: max. {activeRule.max_sqm} m² &amp;{' '}
+                  <span className="text-white underline decoration-emerald-400 underline-offset-4">
+                    {formatEur(activeRule.max_bruttokalt_eur)} Bruttokaltmiete
+                  </span>
+                </p>
+                <p className="mt-0.5 text-xs text-emerald-300/80">
+                  Bruttokaltmiete = Kaltmiete + kalte Betriebskosten (ohne Heizkosten).
+                  {includeTolerance && data?.tolerance_limit_eur
+                    ? ` Mit +10 % Toleranz bis ${formatEur(data.tolerance_limit_eur)}.`
+                    : ' Nach BSG-Produkttheorie zählt primär die Gesamtsumme Bruttokalt.'}
+                </p>
+              </div>
             </div>
+            {data && (
+              <div className="flex shrink-0 items-center gap-2 text-xs">
+                <span className="rounded-lg bg-slate-900/90 px-3 py-1.5 font-semibold text-white ring-1 ring-slate-700">
+                  {data.total} Treffer
+                </span>
+                <span className="rounded-lg bg-amber-500/15 px-3 py-1.5 font-semibold text-amber-300 ring-1 ring-amber-500/30">
+                  {data.private_count} Privat
+                </span>
+              </div>
+            )}
           </div>
         </section>
 
