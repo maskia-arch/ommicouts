@@ -326,6 +326,7 @@ export async function runDeltaPoll({ configId = null } = {}) {
       let updatedCount = 0;
       let skippedCount = 0;
       let stoppedEarly = false;
+      const allowEarlyStop = cfg.portal !== 'other';
       const errors = [];
       const skippedSamples = [];
 
@@ -394,7 +395,7 @@ export async function runDeltaPoll({ configId = null } = {}) {
                 [candidate.externalId]
               );
 
-              if (consecutiveKnown >= 4) {
+              if (allowEarlyStop && consecutiveKnown >= 6) {
                 stoppedEarly = true;
                 break;
               }
