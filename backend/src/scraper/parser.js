@@ -227,10 +227,22 @@ export function parseGermanNumber(raw) {
 }
 
 function safeJsonParse(str) {
+  if (!str) return null;
   try {
     return JSON.parse(str);
   } catch {
-    return null;
+    // Some portals (e.g. Quoka) embed raw newlines or unescaped control chars inside string literals
+    try {
+      const sanitized = str.replace(/[\u0000-\u001F]+/g, (match) => {
+        if (match === '\n') return '\\n';
+        if (match === '\r') return '\\r';
+        if (match === '\t') return '\\t';
+        return ' ';
+      });
+      return JSON.parse(sanitized);
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -963,6 +975,44 @@ export function parseListingDetail(html, url, portal = null, defaultCity = 'Gels
 
     // Trim contact form suffix ("Dieses Objekt anfragen...") so inquiry checkboxes don't pollute heuristics
     descriptionText = mainText.split(/Dieses Objekt anfragen/i)[0].slice(0, 5000);
+  } else if (cleanUrl.includes('quoka.de')) {
+    title =
+      $('h1').first().text().replace(/\s+/g, ' ').trim() ||
+      $('meta[property="og:title"]').attr('content')?.trim() ||
+      '';
+
+    const priceText = $('.product-price').first().text().replace(/\s+/g, ' ').trim();
+    if (priceText && coldRent === null) {
+      coldRent = parseGermanNumber(priceText);
+    }
+
+    const locText = $('.location').text().replace(/\s+/g, ' ').trim();
+    const zipCodeSpan = $('.location .zip-code').text().trim();
+    if (zipCodeSpan && !zipcode) {
+      zipcode = detectZipcode(zipCodeSpan);
+    }
+    if (locText) {
+      localityRaw = locText;
+      if (!zipcode) zipcode = detectZipcode(locText);
+      if (!district) district = detectDistrict(locText, defaultCity, zipcode);
+    }
+
+    $('.article-attributes .attribute-item').each((_, el) => {
+      const itemText = $(el).text().replace(/\s+/g, ' ').trim();
+      const lower = itemText.toLowerCase();
+      if ((lower.includes('wohnfläche') || lower.includes('qm')) && sqm === null) {
+        sqm = parseGermanNumber(itemText);
+      }
+      if (lower.includes('zimmerzahl') && rooms === null) {
+        rooms = parseGermanNumber(itemText);
+      }
+      if (lower.includes('plz') && !zipcode) {
+        zipcode = detectZipcode(itemText);
+      }
+    });
+
+    const descDom = $('.article-description').text().replace(/\s+/g, ' ').trim();
+    if (descDom) descriptionText += ` ${descDom}`;
   }
 
   // 2. Valid Listing JSON-LD extraction (ignores WebSite / BreadcrumbList / ImageObject)
