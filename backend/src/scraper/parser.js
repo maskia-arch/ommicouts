@@ -338,11 +338,16 @@ function parseImmoweltSerpCard($, cardEl, absUrl, defaultCity) {
     title = `${rooms ? `${rooms}-Zimmer-Wohnung` : 'Mietwohnung'} in ${locLabel}${sqm ? ` (${sqm} m²)` : ''}`;
   }
 
-  // Provider/Landlord name is usually near the top of the card before "1 / 15"
+  // Provider/Landlord name: check dedicated agency publisher logos/text on Immowelt cards first!
+  const agencyPublisherEl = $(cardEl).find('[data-testid*="agency-publisher"], [class*="agency"], button:has(img)');
+  const agencyImgAlt = agencyPublisherEl.find('img').attr('alt')?.trim() || '';
+  const agencyText = agencyPublisherEl.text().replace(/\s+/g, ' ').trim();
   const providerPrefix = cardText.split(/\d+\s*\/\s*\d+/)[0]?.trim() || '';
+
+  const sellerCandidates = [agencyImgAlt, agencyText, providerPrefix].filter(Boolean).join(' ');
   const isPrivateLandlord = detectPrivateLandlord({
-    sellerName: providerPrefix,
-    fullText: `${providerPrefix} ${cleanedText}`,
+    sellerName: agencyImgAlt || agencyText || providerPrefix,
+    fullText: `${sellerCandidates} ${cleanedText}`,
     portal: 'immowelt',
   });
 
