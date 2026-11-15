@@ -2,8 +2,183 @@ import { Router } from 'express';
 import { pool } from '../db.js';
 import { optionalUserAuth } from '../middleware/auth.js';
 import { getRulesForCity, resolveRuleForBgSize, round2 } from '../services/kduMatcher.js';
+import { fetchStealthHtml } from '../scraper/httpClient.js';
 
 const router = Router();
+
+const VALID_GE_DISTRICTS = new Set([
+  'Altstadt',
+  'Beckhausen',
+  'Bismarck',
+  'Buer',
+  'Bulmke-Hüllen',
+  'Erle',
+  'Feldmark',
+  'Hassel',
+  'Heßler',
+  'Horst',
+  'Neustadt',
+  'Resse',
+  'Rotthausen',
+  'Schalke',
+  'Scholven',
+  'Ückendorf',
+]);
+
+function mapToGeDistrict(district) {
+  if (!district) return '';
+  if (VALID_GE_DISTRICTS.has(district)) return district;
+  const d = String(district).toLowerCase().trim();
+  for (const valid of VALID_GE_DISTRICTS) {
+    const v = valid.toLowerCase();
+    if (d.includes(v) || v.includes(d)) {
+      return valid;
+    }
+  }
+  return '';
+}
+
+/**
+ * Direct forwarder for Wohnungsaushang Gelsenkirchen.
+ * Stadt Gelsenkirchen's ASP.NET WebForm requires a POST with __VIEWSTATE and suchenButton to display results.
+ * This route fetches fresh tokens and renders an auto-submitting form so the user lands on the pre-filled results table.
+ */
+router.get('/wohnungsaushang/view', async (req, res) => {
+  const targetUrl =
+    'https://www.gelsenkirchen.de/de/infrastruktur/bauen_und_wohnen/wohnungsaushang.aspx';
+  try {
+    const rawId = String(req.query.id || '').trim();
+    let listing = null;
+    if (rawId) {
+      const { rows } = await pool.query(
+        `SELECT * FROM listings WHERE external_id = $1 OR id::text = $1 LIMIT 1`,
+        [rawId]
+      );
+      listing = rows[0] || null;
+    }
+
+    const getRes = await fetchStealthHtml(targetUrl, { preferDesktop: true });
+    const vsMatch = getRes.html.match(/id="__VIEWSTATE"\s+value="([^"]+)"/i);
+    const evMatch = getRes.html.match(/id="__EVENTVALIDATION"\s+value="([^"]+)"/i);
+    const vsgMatch = getRes.html.match(/id="__VIEWSTATEGENERATOR"\s+value="([^"]+)"/i);
+
+    if (!vsMatch) {
+      return res.redirect(targetUrl);
+    }
+
+    const vs = vsMatch[1];
+    const ev = evMatch ? evMatch[1] : '';
+    const vsg = vsgMatch ? vsgMatch[1] : '';
+
+    const districtVal = mapToGeDistrict(listing?.district);
+
+    let roomsVal = '';
+    if (listing?.rooms) {
+      const r = Number(listing.rooms);
+      if (r === 1 || r === 2 || r === 3 || r === 3.5 || r === 4) {
+        roomsVal = String(r);
+      }
+    }
+
+    const safeTitle = (listing?.title || 'Wohnungsaushang Gelsenkirchen')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.send(`<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>Offizieller Wohnungsaushang Gelsenkirchen</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      margin: 0;
+      background-color: #0b1120;
+      color: #f1f5f9;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      text-align: center;
+      padding: 24px;
+      box-sizing: border-box;
+    }
+    .card {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 20px;
+      padding: 32px 24px;
+      max-width: 480px;
+      width: 100%;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+    }
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid rgba(16, 185, 129, 0.2);
+      border-top-color: #10b981;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 20px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    h2 { font-size: 1.25rem; font-weight: 700; margin: 0 0 8px; color: #fff; }
+    p { font-size: 0.875rem; color: #94a3b8; margin: 0 0 24px; line-height: 1.5; }
+    .badge {
+      display: inline-block;
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      padding: 4px 12px;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-bottom: 16px;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    button {
+      background: #10b981;
+      color: #022c22;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 0.875rem;
+      cursor: pointer;
+      width: 100%;
+      transition: background 0.2s;
+    }
+    button:hover { background: #34d399; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="spinner"></div>
+    <div class="badge">Kommunaler Wohnungsaushang Gelsenkirchen</div>
+    <h2>Offizielle Inserate der Stadt</h2>
+    <p>Die Originaldaten werden geladen und für <strong>${safeTitle}</strong> aufgerufen...</p>
+
+    <form id="geForm" method="POST" action="${targetUrl}">
+      <input type="hidden" name="__VIEWSTATE" value="${vs}" />
+      <input type="hidden" name="__VIEWSTATEGENERATOR" value="${vsg}" />
+      <input type="hidden" name="__EVENTVALIDATION" value="${ev}" />
+      ${districtVal ? `<input type="hidden" name="ctl00$ctl00$contentContentPlaceHolder$spalte_links$ctl00$lbOrtsteile" value="${districtVal}" />` : ''}
+      ${roomsVal ? `<input type="hidden" name="ctl00$ctl00$contentContentPlaceHolder$spalte_links$ctl00$lbRaeume" value="${roomsVal}" />` : ''}
+      <input type="hidden" name="ctl00$ctl00$contentContentPlaceHolder$spalte_links$ctl00$suchenButton" value="Suchen" />
+      <button type="submit">Weiterleitung manuell starten</button>
+    </form>
+  </div>
+  <script>
+    document.getElementById('geForm').submit();
+  </script>
+</body>
+</html>`);
+  } catch {
+    return res.redirect(targetUrl);
+  }
+});
 
 router.get('/health', async (_req, res) => {
   try {
@@ -162,8 +337,16 @@ router.get('/listings', optionalUserAuth, async (req, res) => {
           sqmNum !== null && sqmNum > activeRule.max_sqm ? 'produkttheorie' : 'compliant';
       }
 
+      const isWohnungsaushang =
+        row.external_id?.startsWith('ge_aushang_') ||
+        String(row.url || '').includes('wohnungsaushang');
+      const resolvedUrl = isWohnungsaushang
+        ? `/api/public/wohnungsaushang/view?id=${encodeURIComponent(row.external_id)}`
+        : row.url;
+
       return {
         ...row,
+        url: resolvedUrl,
         contact_name: isAuthenticated ? row.contact_name : null,
         contact_phone: isAuthenticated ? row.contact_phone : null,
         contact_email: isAuthenticated ? row.contact_email : null,

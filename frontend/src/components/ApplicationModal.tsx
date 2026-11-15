@@ -467,15 +467,29 @@ ${nameLine}${phoneLine}`;
                 </>
               )}
             </button>
-            <a
-              href={listing.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-emerald-400"
-            >
-              Zur Originalanzeige
-              <ExternalLink className="h-4 w-4" />
-            </a>
+            {(() => {
+              const isWohnungsaushang =
+                listing.external_id?.startsWith('ge_aushang_') ||
+                String(listing.url || '').includes('wohnungsaushang');
+              const targetUrl = isWohnungsaushang
+                ? `/api/public/wohnungsaushang/view?id=${encodeURIComponent(listing.external_id)}`
+                : listing.url;
+              const buttonText = isWohnungsaushang
+                ? 'Zum Wohnungsaushang'
+                : 'Zur Originalanzeige';
+
+              return (
+                <a
+                  href={targetUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-emerald-400"
+                >
+                  {buttonText}
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              );
+            })()}
           </div>
         </div>
       </div>

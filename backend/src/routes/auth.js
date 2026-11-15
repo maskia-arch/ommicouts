@@ -273,6 +273,7 @@ router.get('/me/applications', requireUserAuth, async (req, res) => {
          ua.contacted_at,
          ua.created_at,
          ua.updated_at,
+         l.external_id,
          l.title,
          l.url,
          l.city,
@@ -296,7 +297,19 @@ router.get('/me/applications', requireUserAuth, async (req, res) => {
       [req.user.id]
     );
 
-    return res.json({ applications: rows });
+    const mapped = rows.map((r) => {
+      const isWohnungsaushang =
+        r.external_id?.startsWith('ge_aushang_') ||
+        String(r.url || '').includes('wohnungsaushang');
+      return {
+        ...r,
+        url: isWohnungsaushang
+          ? `/api/public/wohnungsaushang/view?id=${encodeURIComponent(r.external_id)}`
+          : r.url,
+      };
+    });
+
+    return res.json({ applications: mapped });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

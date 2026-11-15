@@ -87,7 +87,32 @@ function formatEur(val: number | null | undefined): string {
   return `${Number(val).toFixed(2).replace('.', ',')} €`;
 }
 
-function formatPortal(portal: ListingItem['portal']): string {
+function formatPortal(portal: ListingItem['portal'], item?: ListingItem): string {
+  if (item) {
+    const url = String(item.url || '').toLowerCase();
+    const ext = String(item.external_id || '').toLowerCase();
+    if (ext.startsWith('ge_aushang_') || url.includes('wohnungsaushang') || url.includes('gelsenkirchen.de')) {
+      return 'Wohnungsaushang Gelsenkirchen';
+    }
+    if (ext.startsWith('om_') || url.includes('ohne-makler.net')) {
+      return 'Ohne-Makler.net';
+    }
+    if (ext.startsWith('ggw_') || url.includes('ggw-gelsenkirchen.de')) {
+      return 'GGW Gelsenkirchen';
+    }
+    if (ext.startsWith('ms_') || url.includes('mietsofort.de')) {
+      return 'MietSofort';
+    }
+    if (ext.startsWith('rt_') || url.includes('rentola.de')) {
+      return 'Rentola';
+    }
+    if (ext.startsWith('qk_') || url.includes('quoka.de')) {
+      return 'Quoka';
+    }
+    if (url.includes('meinestadt.de')) {
+      return 'Meinestadt';
+    }
+  }
   switch (portal) {
     case 'kleinanzeigen':
       return 'Kleinanzeigen';
@@ -96,7 +121,7 @@ function formatPortal(portal: ListingItem['portal']): string {
     case 'immoscout':
       return 'ImmoScout24';
     default:
-      return 'Portal';
+      return 'Direktanbieter';
   }
 }
 
@@ -1180,7 +1205,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                     )}
 
                     <span className="ml-auto text-[11px] font-medium text-slate-500">
-                      {formatPortal(item.portal)} · {formatRelativeDate(item.first_seen_at)}
+                      {formatPortal(item.portal, item)} · {formatRelativeDate(item.first_seen_at)}
                     </span>
                   </div>
 
@@ -1216,7 +1241,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                     item.contact_phone || item.contact_email || item.contact_name ? (
                       <div className="mt-3 flex h-[56px] flex-col justify-center gap-1 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs">
                         <div className="truncate font-medium text-slate-200" title={item.contact_name || ''}>
-                          {item.contact_name || `Anbieter (${formatPortal(item.portal)})`}
+                          {item.contact_name || `Anbieter (${formatPortal(item.portal, item)})`}
                         </div>
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 truncate">
                           {item.contact_phone && (
@@ -1239,7 +1264,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                           )}
                           {!item.contact_phone && !item.contact_email && (
                             <span className="text-[11px] text-slate-400">
-                              Kontakt über Originalanzeige ({formatPortal(item.portal)})
+                              Kontakt über Originalanzeige ({formatPortal(item.portal, item)})
                             </span>
                           )}
                         </div>
@@ -1247,7 +1272,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                     ) : (
                       <div className="mt-3 flex h-[56px] flex-col justify-center gap-0.5 rounded-xl border border-slate-800/80 bg-slate-950/40 px-3 py-2 text-xs text-slate-400">
                         <div className="truncate font-medium text-slate-300">
-                          Anbieter über {formatPortal(item.portal)}
+                          Anbieter über {formatPortal(item.portal, item)}
                         </div>
                         <div className="truncate text-[11px] text-slate-500">
                           Keine direkte Telefonnummer hinterlegt · Anfrage über Originalanzeige
@@ -1399,26 +1424,40 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                         );
                       })()}
 
-                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedListing(item)}
-                          className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3.5 py-2.5 text-xs font-bold text-amber-300 transition hover:bg-amber-500/20 active:scale-[0.99]"
-                        >
-                          <ShieldCheck className="h-4 w-4 shrink-0" />
-                          <span>Bewerbung &amp; Anschreiben</span>
-                        </button>
+                      {(() => {
+                        const isWohnungsaushang =
+                          item.external_id?.startsWith('ge_aushang_') ||
+                          String(item.url || '').includes('wohnungsaushang');
+                        const targetUrl = isWohnungsaushang
+                          ? `/api/public/wohnungsaushang/view?id=${encodeURIComponent(item.external_id)}`
+                          : item.url;
+                        const buttonText = isWohnungsaushang
+                          ? 'Zum Wohnungsaushang'
+                          : 'Zur Originalanzeige';
 
-                        <a
-                          href={item.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-2.5 text-xs font-bold text-slate-950 transition hover:bg-emerald-400 active:scale-[0.99]"
-                        >
-                          <span>Zur Originalanzeige</span>
-                          <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-                        </a>
-                      </div>
+                        return (
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedListing(item)}
+                              className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3.5 py-2.5 text-xs font-bold text-amber-300 transition hover:bg-amber-500/20 active:scale-[0.99]"
+                            >
+                              <ShieldCheck className="h-4 w-4 shrink-0" />
+                              <span>Bewerbung &amp; Anschreiben</span>
+                            </button>
+
+                            <a
+                              href={targetUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-2.5 text-xs font-bold text-slate-950 transition hover:bg-emerald-400 active:scale-[0.99]"
+                            >
+                              <span>{buttonText}</span>
+                              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                            </a>
+                          </div>
+                        );
+                      })()}
 
                       <div className="flex items-center justify-end gap-2 pt-0.5 text-[11px]">
                         <button
