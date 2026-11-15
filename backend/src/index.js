@@ -39,6 +39,7 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 app.use('/api', publicRoutes);
+app.use('/api/public', publicRoutes);
 app.use('/api', authRoutes);
 app.use('/api/org', orgRoutes);
 app.use('/api/webhook', webhookRoutes);

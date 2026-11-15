@@ -1429,7 +1429,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                           item.external_id?.startsWith('ge_aushang_') ||
                           String(item.url || '').includes('wohnungsaushang');
                         const targetUrl = isWohnungsaushang
-                          ? `/api/public/wohnungsaushang/view?id=${encodeURIComponent(item.external_id)}`
+                          ? `/api/wohnungsaushang/view?id=${encodeURIComponent(item.external_id)}`
                           : item.url;
                         const buttonText = isWohnungsaushang
                           ? 'Zum Wohnungsaushang'

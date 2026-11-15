@@ -456,7 +456,7 @@ export function parseWohnungsaushangTable($, baseUrl, defaultCity = 'Gelsenkirch
       .replace(/[^a-z0-9]/g, '');
     const hash = crypto.createHash('md5').update(normKey).digest('hex').slice(0, 12);
     const externalId = `ge_aushang_${hash}`;
-    const url = `/api/public/wohnungsaushang/view?id=${externalId}`;
+    const url = `/api/wohnungsaushang/view?id=${externalId}`;
 
     const title = `${rooms ? `${rooms}-Zimmer-Wohnung` : 'Mietwohnung'} in Gelsenkirchen-${district}${streetCandidate ? `, ${streetCandidate}` : ''}${sqm ? ` (${sqm} m²)` : ''}`;
 

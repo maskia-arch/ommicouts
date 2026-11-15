@@ -304,7 +304,7 @@ router.get('/me/applications', requireUserAuth, async (req, res) => {
       return {
         ...r,
         url: isWohnungsaushang
-          ? `/api/public/wohnungsaushang/view?id=${encodeURIComponent(r.external_id)}`
+          ? `/api/wohnungsaushang/view?id=${encodeURIComponent(r.external_id)}`
           : r.url,
       };
     });

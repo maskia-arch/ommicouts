@@ -341,7 +341,7 @@ router.get('/listings', optionalUserAuth, async (req, res) => {
         row.external_id?.startsWith('ge_aushang_') ||
         String(row.url || '').includes('wohnungsaushang');
       const resolvedUrl = isWohnungsaushang
-        ? `/api/public/wohnungsaushang/view?id=${encodeURIComponent(row.external_id)}`
+        ? `/api/wohnungsaushang/view?id=${encodeURIComponent(row.external_id)}`
         : row.url;
 
       return {

@@ -472,7 +472,7 @@ ${nameLine}${phoneLine}`;
                 listing.external_id?.startsWith('ge_aushang_') ||
                 String(listing.url || '').includes('wohnungsaushang');
               const targetUrl = isWohnungsaushang
-                ? `/api/public/wohnungsaushang/view?id=${encodeURIComponent(listing.external_id)}`
+                ? `/api/wohnungsaushang/view?id=${encodeURIComponent(listing.external_id)}`
                 : listing.url;
               const buttonText = isWohnungsaushang
                 ? 'Zum Wohnungsaushang'
