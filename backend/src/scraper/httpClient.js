@@ -16,15 +16,27 @@ export async function sleepJitter(minMs = 4000, maxMs = 15000) {
 
 export async function fetchStealthHtml(
   url,
-  { proxyUrl = null, referer = null, timeoutMs = 20000, preferDesktop = false } = {}
+  {
+    proxyUrl = null,
+    referer = null,
+    timeoutMs = 20000,
+    preferDesktop = false,
+    method = 'GET',
+    form = null,
+    json = null,
+    extraHeaders = null,
+  } = {}
 ) {
   const profile = pickRandomProfile(preferDesktop);
   const headers = buildStealthHeaders(profile, referer);
+  if (extraHeaders && typeof extraHeaders === 'object') {
+    Object.assign(headers, extraHeaders);
+  }
   const resolvedProxy = (proxyUrl || config.proxyUrl || '').trim() || undefined;
 
   const options = {
     url,
-    method: 'GET',
+    method: form || json ? 'POST' : method,
     headers,
     throwHttpErrors: false,
     followRedirect: true,
@@ -38,6 +50,13 @@ export async function fetchStealthHtml(
       locales: ['de-DE'],
     },
   };
+
+  if (form) {
+    options.form = form;
+  }
+  if (json) {
+    options.json = json;
+  }
 
   if (resolvedProxy) {
     options.proxyUrl = resolvedProxy;

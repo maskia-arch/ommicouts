@@ -167,6 +167,36 @@ VALUES
         TRUE
     ),
     (
+        'other',
+        'Gelsenkirchen',
+        'MietSofort Gelsenkirchen (Mietwohnungen)',
+        'https://www.mietsofort.de/mietwohnungen?city=Gelsenkirchen',
+        '*/30 * * * *',
+        4000,
+        15000,
+        TRUE
+    ),
+    (
+        'other',
+        'Gelsenkirchen',
+        'Rentola Gelsenkirchen (Mietwohnungen)',
+        'https://rentola.de/mieten/gelsenkirchen',
+        '*/30 * * * *',
+        4000,
+        15000,
+        TRUE
+    ),
+    (
+        'other',
+        'Gelsenkirchen',
+        'Kommunaler Wohnungsaushang Gelsenkirchen (Offizieller Aushang der Stadt)',
+        'https://www.gelsenkirchen.de/de/infrastruktur/bauen_und_wohnen/wohnungsaushang.aspx',
+        '0 */2 * * *',
+        4000,
+        15000,
+        TRUE
+    ),
+    (
         'immoscout',
         'Gelsenkirchen',
         'ImmoScout24 Gelsenkirchen (Optional mit Wohn-Proxy aktivierbar, bis 850 EUR)',

@@ -11,6 +11,43 @@ export function normalizeTitleForMatch(title) {
     .replace(/[^a-z0-9]+/g, '');
 }
 
+export function extractStreetForMatch(text) {
+  if (!text) return null;
+  const match = String(text).match(
+    /\b(?:(?:am|an\s+der|auf\s+dem|auf\s+der|in\s+der|im|alte|alter|neue|neuer)\s+)?([a-zäöüß\-]+(?:\s*(?:str(?:aße|asse)?\.?|weg|platz|gasse|allee|delle|hof|ring|damm)))\s+(\d+\s*[a-z]?)\b/i
+  );
+  if (match) {
+    const streetName = match[1]
+      .toLowerCase()
+      .replace(/str\./g, 'strasse')
+      .replace(/str$/g, 'strasse')
+      .replace(/straße/g, 'strasse')
+      .replace(/ä/g, 'ae')
+      .replace(/ö/g, 'oe')
+      .replace(/ü/g, 'ue')
+      .replace(/ß/g, 'ss')
+      .replace(/[^a-z0-9]/g, '');
+    const houseNum = match[2].toLowerCase().replace(/[^a-z0-9]/g, '');
+    return `${streetName}${houseNum}`;
+  }
+  return null;
+}
+
+export function getListingOriginKey(listing) {
+  if (!listing) return '';
+  const url = String(listing.url || '').toLowerCase();
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '');
+    if (host) return host;
+  } catch {
+    // fallback
+  }
+  const ext = String(listing.external_id || '').toLowerCase();
+  const match = ext.match(/^([a-z0-9]+)_/);
+  if (match) return match[1];
+  return String(listing.portal || '').toLowerCase();
+}
+
 function isSyndicatedWithoutAgentText(listing) {
   const hay = `${listing.contact_name || ''} ${listing.title || ''}`.toLowerCase();
   return /om\s+ohne\s+makler|ohne\s+makler\s*-\s*privat/.test(hay);
@@ -33,14 +70,22 @@ function isGenericTitle(title) {
 export function computeListingPriorityScore(listing) {
   let score = 0;
   const ext = String(listing.external_id || '').toLowerCase();
+  const url = String(listing.url || '').toLowerCase();
   const portal = String(listing.portal || '').toLowerCase();
 
-  if (ext.startsWith('om_') || ext.startsWith('ggw_')) {
-    score += 40;
-  } else if (portal === 'kleinanzeigen') {
+  // Primary municipal/landlord portals have top precedence
+  if (ext.startsWith('ge_aushang_') || url.includes('wohnungsaushang') || url.includes('gelsenkirchen.de')) {
+    score += 50; // Official municipal board (direct landlord phone)
+  } else if (ext.startsWith('om_') || ext.startsWith('ggw_') || url.includes('ohne-makler.net') || url.includes('ggw-gelsenkirchen.de')) {
+    score += 40; // Direct landlord/housing company
+  } else if (portal === 'kleinanzeigen' || url.includes('kleinanzeigen.de')) {
     score += 25;
-  } else if (portal === 'immowelt') {
+  } else if (portal === 'immowelt' || url.includes('immowelt.de')) {
+    score += 18;
+  } else if (url.includes('mietsofort.de')) {
     score += 15;
+  } else if (url.includes('rentola.de')) {
+    score += 14;
   } else {
     score += 10;
   }
@@ -64,9 +109,9 @@ export function isCrossPortalDuplicatePair(a, b) {
   if (!a || !b) return false;
   if (a.external_id && b.external_id && a.external_id === b.external_id) return false;
 
-  const portalA = String(a.portal || '').toLowerCase();
-  const portalB = String(b.portal || '').toLowerCase();
-  if (!portalA || !portalB || portalA === portalB) return false;
+  const originA = getListingOriginKey(a);
+  const originB = getListingOriginKey(b);
+  if (!originA || !originB || originA === originB) return false;
 
   const cityA = String(a.city || '').trim().toLowerCase();
   const cityB = String(b.city || '').trim().toLowerCase();
@@ -88,6 +133,10 @@ export function isCrossPortalDuplicatePair(a, b) {
   if (Math.abs(sqmA - sqmB) > 1.0) return false;
   if (Math.abs(rentA - rentB) > 5.0) return false;
 
+  const streetA = extractStreetForMatch(`${a.title || ''} ${a.locality_raw || ''} ${a.url || ''}`);
+  const streetB = extractStreetForMatch(`${b.title || ''} ${b.locality_raw || ''} ${b.url || ''}`);
+  const streetMatch = streetA && streetB && streetA === streetB;
+
   const zipA = String(a.zipcode || '').trim();
   const zipB = String(b.zipcode || '').trim();
   const titleA = normalizeTitleForMatch(a.title);
@@ -96,6 +145,11 @@ export function isCrossPortalDuplicatePair(a, b) {
     titleA.length >= 16 &&
     titleB.length >= 16 &&
     (titleA === titleB || titleA.startsWith(titleB.slice(0, 24)) || titleB.startsWith(titleA.slice(0, 24)));
+
+  if (streetMatch) {
+    // Exact street + house number matched with matching rent and sqm
+    return true;
+  }
 
   if (zipA && zipB) {
     if (zipA !== zipB) return false;
@@ -195,17 +249,19 @@ async function mergeUserReferencesAndMarkOffline(winner, loser, rules = null) {
  * Returns { duplicate: false } or { duplicate: true, winner, incomingWon }.
  */
 export async function findCrossPortalDuplicate(parsed) {
+  const originIncoming = getListingOriginKey(parsed);
   const { rows: candidates } = await pool.query(
     `SELECT *
      FROM listings
      WHERE status = 'active'
        AND LOWER(city) = LOWER($1)
-       AND portal <> $2
-       AND external_id <> $3`,
-    [parsed.city, parsed.portal, parsed.external_id]
+       AND external_id <> $2`,
+    [parsed.city, parsed.external_id]
   );
 
   for (const existing of candidates) {
+    const originExisting = getListingOriginKey(existing);
+    if (originIncoming && originExisting && originIncoming === originExisting) continue;
     if (!isCrossPortalDuplicatePair(parsed, existing)) continue;
 
     const scoreIncoming = computeListingPriorityScore(parsed);

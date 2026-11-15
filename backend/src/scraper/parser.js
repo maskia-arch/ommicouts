@@ -17,6 +17,29 @@ export const GELSENKIRCHEN_ZIP_DISTRICTS = {
   '45899': ['Beckhausen', 'Horst'],
 };
 
+export const GELSENKIRCHEN_DISTRICT_PRIMARY_ZIP = {
+  Altstadt: '45879',
+  Neustadt: '45879',
+  Schalke: '45881',
+  'Schalke-Nord': '45881',
+  Feldmark: '45883',
+  Heßler: '45883',
+  Hessler: '45883',
+  Rotthausen: '45884',
+  Ückendorf: '45886',
+  'Bulmke-Hüllen': '45888',
+  Bismarck: '45889',
+  Erle: '45891',
+  Resse: '45892',
+  'Resser Mark': '45892',
+  Buer: '45894',
+  'Buer-Nord': '45897',
+  Hassel: '45896',
+  Scholven: '45896',
+  Beckhausen: '45899',
+  Horst: '45899',
+};
+
 const GELSENKIRCHEN_DISTRICTS = [
   'Schalke-Nord',
   'Bulmke-Hüllen',
@@ -153,6 +176,24 @@ export function extractExternalId(url, portal = null) {
     if (match) return `qk_${match[1].toLowerCase()}`;
   }
 
+  if (cleanUrl.includes('wohnungsaushang') || cleanUrl.includes('gelsenkirchen.de/de/infrastruktur/bauen_und_wohnen/wohnungsaushang')) {
+    const match = cleanUrl.match(/#wohnung-([a-z0-9_-]+)/i) || cleanUrl.match(/([a-z0-9]{8,32})$/i);
+    if (match) return `ge_aushang_${match[1]}`;
+  }
+
+  if (cleanUrl.includes('mietsofort.de')) {
+    const match = cleanUrl.match(/-p([a-f0-9-]+)(?:\?.*)?$/i) ||
+      cleanUrl.match(/\/wohnung\/([a-f0-9-]+)/i) ||
+      cleanUrl.match(/\/expose\/([a-f0-9-]+)/i);
+    if (match) return `ms_${match[1]}`;
+  }
+
+  if (cleanUrl.includes('rentola.de')) {
+    const match = cleanUrl.match(/-p([a-f0-9]+)(?:\?.*)?$/i) ||
+      cleanUrl.match(/\/listings\/([a-z0-9_-]+)/i);
+    if (match) return `rt_${match[1]}`;
+  }
+
   const hash = crypto.createHash('sha1').update(cleanUrl).digest('hex').slice(0, 14);
   const prefix =
     resolvedPortal === 'kleinanzeigen'
@@ -190,7 +231,7 @@ export function buildPagedSearchUrl(baseUrl, page, portal) {
       return u.toString();
     }
 
-    if (u.hostname.includes('ggw-gelsenkirchen.de')) {
+    if (u.hostname.includes('ggw-gelsenkirchen.de') || u.pathname.includes('wohnungsaushang')) {
       return baseUrl;
     }
 
@@ -375,6 +416,127 @@ function parseImmoweltSerpCard($, cardEl, absUrl, defaultCity) {
   };
 }
 
+export function parseWohnungsaushangTable($, baseUrl, defaultCity = 'Gelsenkirchen') {
+  const candidates = [];
+  const rows = $('table[id*="wohnungenGridView"] tr');
+  if (rows.length <= 1) return candidates;
+
+  rows.each((i, tr) => {
+    if (i === 0 || $(tr).find('th').length > 0) return;
+    const cols = $(tr).find('td');
+    if (cols.length < 4) return;
+
+    const roomsText = $(cols[0]).text().trim();
+    const sqmText = $(cols[1]).text().trim();
+    const rentText = $(cols[2]).text().trim();
+    const addressText = $(cols[3]).text().replace(/\s+/g, ' ').trim();
+    const phoneText = cols.length >= 5 ? $(cols[4]).text().replace(/\s+/g, ' ').trim() : '';
+
+    const rooms = parseGermanNumber(roomsText);
+    const sqm = parseGermanNumber(sqmText);
+    const coldRent = parseGermanNumber(rentText);
+
+    let districtCandidate = null;
+    let streetCandidate = addressText;
+    if (addressText.includes(',')) {
+      const parts = addressText.split(',');
+      districtCandidate = parts[0].trim();
+      streetCandidate = parts.slice(1).join(',').trim();
+    }
+
+    const detectedDistrict = detectDistrict(districtCandidate || addressText, defaultCity);
+    const district =
+      detectedDistrict ||
+      (districtCandidate && GELSENKIRCHEN_DISTRICT_PRIMARY_ZIP[districtCandidate] ? districtCandidate : defaultCity);
+    const zipcode = GELSENKIRCHEN_DISTRICT_PRIMARY_ZIP[district] || detectZipcode(addressText) || '45879';
+
+    const normKey = `${district}_${streetCandidate}_${sqm || ''}_${coldRent || ''}`
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+    const hash = crypto.createHash('md5').update(normKey).digest('hex').slice(0, 12);
+    const externalId = `ge_aushang_${hash}`;
+    const cleanBase = baseUrl.split('#')[0];
+    const url = `${cleanBase}#wohnung-${hash}`;
+
+    const title = `${rooms ? `${rooms}-Zimmer-Wohnung` : 'Mietwohnung'} in Gelsenkirchen-${district}${streetCandidate ? `, ${streetCandidate}` : ''}${sqm ? ` (${sqm} m²)` : ''}`;
+
+    const serpParsed = {
+      external_id: externalId,
+      portal: 'other',
+      title: title.slice(0, 300),
+      url,
+      city: defaultCity,
+      district: district || defaultCity,
+      zipcode,
+      locality_raw: `${addressText}, Gelsenkirchen`.slice(0, 200),
+      cold_rent: coldRent,
+      additional_costs: 0,
+      heating_costs: 0,
+      sqm,
+      rooms,
+      is_private_landlord: true,
+      wbs_required: true,
+      is_wanted: false,
+      contact_name: 'Vermieter (Wohnungsaushang)',
+      contact_phone: phoneText || null,
+      contact_email: null,
+      description_snippet: `Kommunaler Wohnungsaushang Gelsenkirchen: ${rooms || '?'} Zimmer, ${sqm || '?'} m², Kaltmiete ${coldRent || '?'} €. WBS erforderlich. Kontakt: ${phoneText || 'Stadt Gelsenkirchen'}`.slice(0, 500),
+    };
+
+    candidates.push({
+      externalId,
+      url,
+      portal: 'other',
+      quickTitle: title,
+      serpParsed,
+    });
+  });
+
+  return candidates;
+}
+
+export function parseMietsofortItem(item, defaultCity = 'Gelsenkirchen') {
+  const id = String(item.id || '');
+  const externalId = `ms_${id}`;
+  const slug = item.slug || id;
+  const url = `https://www.mietsofort.de/wohnung/${slug}`;
+  const coldRent = parseGermanNumber(item.price);
+  const sqm = parseGermanNumber(item.size_sqm);
+  const rooms = parseGermanNumber(item.rooms);
+  const address = item.address || '';
+  const zipcode = item.postal_code || detectZipcode(`${address} ${item.description || ''}`);
+  const district = detectDistrict(`${address} ${item.title || ''}`, defaultCity, zipcode);
+  const isPrivate = detectPrivateLandlord({
+    sellerName: item.contact_name,
+    fullText: `${item.title || ''} ${item.description || ''}`,
+    portal: 'other',
+  });
+  const wbsRequired = detectWbsRequired(`${item.title || ''} ${item.description || ''}`);
+
+  return {
+    external_id: externalId,
+    portal: 'other',
+    title: (item.title || `${rooms ? `${rooms}-Zimmer-Wohnung` : 'Mietwohnung'} in ${defaultCity}`).slice(0, 300),
+    url,
+    city: defaultCity,
+    district: district || defaultCity,
+    zipcode,
+    locality_raw: address ? `${address}, ${zipcode || ''} ${defaultCity}`.trim() : defaultCity,
+    cold_rent: coldRent,
+    additional_costs: 0,
+    heating_costs: 0,
+    sqm,
+    rooms,
+    is_private_landlord: isPrivate,
+    wbs_required: wbsRequired,
+    is_wanted: false,
+    contact_name: item.contact_name || null,
+    contact_phone: item.contact_phone || null,
+    contact_email: item.contact_email || null,
+    description_snippet: (item.description || item.title || '').slice(0, 500),
+  };
+}
+
 export function extractSearchListingLinks(html, baseUrl, portal, defaultCity = 'Gelsenkirchen') {
   const $ = cheerio.load(html);
   const found = [];
@@ -495,6 +657,88 @@ export function extractSearchListingLinks(html, baseUrl, portal, defaultCity = '
         pushCandidate(href, { title: $(el).text().trim() });
       }
     });
+    return found;
+  }
+
+  if (String(baseUrl || '').includes('wohnungsaushang')) {
+    const list = parseWohnungsaushangTable($, baseUrl, defaultCity);
+    for (const item of list) {
+      if (!seenIds.has(item.externalId)) {
+        seenIds.add(item.externalId);
+        found.push(item);
+      }
+    }
+    return found;
+  }
+
+  if (String(baseUrl || '').includes('rentola.de')) {
+    // 1. JSON-LD ItemList
+    $('script[type="application/ld+json"]').each((_, el) => {
+      try {
+        const data = safeJsonParse($(el).html());
+        if (data && (data['@type'] === 'ItemList' || data.itemListElement) && Array.isArray(data.itemListElement)) {
+          for (const item of data.itemListElement) {
+            if (!item || !item.url) continue;
+            let absUrl;
+            try {
+              absUrl = normalizeListingUrl(new URL(item.url, baseUrl).toString());
+            } catch {
+              continue;
+            }
+            const extId = extractExternalId(absUrl, 'other');
+            if (seenIds.has(extId)) continue;
+            seenIds.add(extId);
+
+            const coldRent = parseGermanNumber(item.offers?.price);
+            const sqm = parseGermanNumber(item.offers?.itemOffered?.floorSize?.value);
+            const rooms = parseGermanNumber(
+              item.offers?.itemOffered?.numberOfRooms?.value ?? item.offers?.itemOffered?.numberOfBedrooms?.value
+            );
+            const streetAddr = item.offers?.itemOffered?.address?.streetAddress || '';
+            const zipcode = detectZipcode(streetAddr);
+            const district = detectDistrict(streetAddr || item.name, defaultCity, zipcode);
+            const title = String(item.name || `${rooms ? `${rooms}-Zimmer-Wohnung` : 'Mietwohnung'} in ${defaultCity}`).trim();
+
+            const serpParsed = {
+              external_id: extId,
+              portal: 'other',
+              title: title.slice(0, 300),
+              url: absUrl,
+              city: defaultCity,
+              district: district || defaultCity,
+              zipcode,
+              locality_raw: streetAddr ? `${streetAddr}, ${defaultCity}`.slice(0, 200) : defaultCity,
+              cold_rent: coldRent,
+              additional_costs: 0,
+              heating_costs: 0,
+              sqm,
+              rooms,
+              is_private_landlord: false,
+              wbs_required: detectWbsRequired(title),
+              is_wanted: false,
+              description_snippet: title.slice(0, 500),
+            };
+
+            found.push({
+              externalId: extId,
+              url: absUrl,
+              portal: 'other',
+              quickTitle: title,
+              serpParsed,
+            });
+          }
+        }
+      } catch {}
+    });
+
+    // 2. Fallback DOM links
+    $('a[href*="/listings/"]').each((_, el) => {
+      const href = $(el).attr('href') || '';
+      if (/\/listings\/[a-z0-9_-]+/i.test(href)) {
+        pushCandidate(href, { title: $(el).text().trim() });
+      }
+    });
+
     return found;
   }
 
@@ -1037,6 +1281,25 @@ export function parseListingDetail(html, url, portal = null, defaultCity = 'Gels
       if (offer?.seller) {
         if (offer.seller['@type']) sellerTypeRaw += ` ${offer.seller['@type']}`;
         if (offer.seller.name) sellerName += ` ${offer.seller.name}`;
+      }
+      if (offer?.itemOffered) {
+        const item = offer.itemOffered;
+        if (sqm === null && item.floorSize?.value) {
+          sqm = parseGermanNumber(item.floorSize.value);
+        }
+        if (rooms === null && (item.numberOfRooms?.value ?? item.numberOfBedrooms?.value)) {
+          rooms = parseGermanNumber(item.numberOfRooms?.value ?? item.numberOfBedrooms?.value);
+        }
+        if (item.address) {
+          if (item.address.postalCode && !zipcode) zipcode = String(item.address.postalCode).trim();
+          if (item.address.addressLocality) {
+            if (!localityRaw) localityRaw = String(item.address.addressLocality).trim();
+            if (!district) district = detectDistrict(item.address.addressLocality, defaultCity);
+          }
+          if (item.address.streetAddress && !localityRaw) {
+            localityRaw = String(item.address.streetAddress).trim();
+          }
+        }
       }
     }
     if (ld.floorSize?.value && sqm === null) {

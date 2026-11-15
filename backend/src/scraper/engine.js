@@ -16,6 +16,8 @@ import {
   extractSearchListingLinks,
   isListingOfflineHtml,
   parseListingDetail,
+  parseMietsofortItem,
+  parseWohnungsaushangTable,
 } from './parser.js';
 import { validateListing } from './validator.js';
 
@@ -295,6 +297,80 @@ export async function crawlSingleUrl(
   }
 }
 
+export async function fetchWohnungsaushangTable(url, { proxyUrl = null } = {}) {
+  const getRes = await fetchStealthHtml(url, { proxyUrl, preferDesktop: true });
+  if (getRes.statusCode >= 400) return getRes;
+
+  const vsMatch = getRes.html.match(/id="__VIEWSTATE"\s+value="([^"]+)"/i);
+  const evMatch = getRes.html.match(/id="__EVENTVALIDATION"\s+value="([^"]+)"/i);
+  const vsgMatch = getRes.html.match(/id="__VIEWSTATEGENERATOR"\s+value="([^"]+)"/i);
+
+  if (!vsMatch) {
+    return getRes;
+  }
+
+  const postRes = await fetchStealthHtml(url, {
+    proxyUrl,
+    preferDesktop: true,
+    referer: url,
+    form: {
+      __VIEWSTATE: vsMatch[1],
+      __VIEWSTATEGENERATOR: vsgMatch ? vsgMatch[1] : '',
+      __EVENTVALIDATION: evMatch ? evMatch[1] : '',
+      ctl00$ctl00$contentContentPlaceHolder$spalte_links$ctl00$suchenButton: 'Suchen',
+    },
+  });
+
+  return postRes;
+}
+
+const MIETSOFORT_ANON_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6em1lc2V2c2xkbGtscGVwb21lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY2MzE2ODMsImV4cCI6MjEwMjIwNzY4M30.IsPNuf-iqg6HtxOAaCp4Y-1_XbJ2ZZjwzkRZkiyV3Rc';
+
+export async function fetchMietsofortListings(city = 'Gelsenkirchen', page = 1, { proxyUrl = null } = {}) {
+  try {
+    const res = await fetchStealthHtml('https://api.mietsofort.de/rest/v1/rpc/site_listings', {
+      proxyUrl,
+      preferDesktop: true,
+      extraHeaders: {
+        apikey: MIETSOFORT_ANON_KEY,
+        Authorization: `Bearer ${MIETSOFORT_ANON_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      json: {
+        p_filter: { city },
+        p_sort: 'newest',
+        p_offset: Math.max(0, (page - 1) * 50),
+        p_limit: 50,
+      },
+    });
+
+    if (res.statusCode >= 400) {
+      return { error: `HTTP ${res.statusCode}`, candidates: [] };
+    }
+
+    const items = typeof res.html === 'string' ? JSON.parse(res.html) : res.html;
+    if (!Array.isArray(items)) {
+      return { candidates: [] };
+    }
+
+    const candidates = items.map((item) => {
+      const parsed = parseMietsofortItem(item, city);
+      return {
+        externalId: parsed.external_id,
+        url: parsed.url,
+        portal: 'other',
+        quickTitle: parsed.title,
+        serpParsed: parsed,
+      };
+    });
+
+    return { candidates };
+  } catch (err) {
+    return { error: err.message, candidates: [] };
+  }
+}
+
 /**
  * Phase A: Delta-Poller
  * Checks page 1 & 2 of active configs (newest first).
@@ -338,24 +414,56 @@ export async function runDeltaPoll({ configId = null } = {}) {
         for (const page of [1, 2]) {
           if (stoppedEarly) break;
 
-          const pagedUrl = buildPagedSearchUrl(cfg.search_url, page, cfg.portal);
-          if (page > 1 && pagedUrl === cfg.search_url) break;
-          const searchRes = await fetchStealthHtml(pagedUrl, {
-            proxyUrl: cfg.proxy_url,
-            preferDesktop: true,
-          });
+          let candidates = [];
+          const isAushang = cfg.search_url.includes('wohnungsaushang');
+          const isMietsofort = cfg.search_url.includes('mietsofort.de');
+          let pagedUrl = cfg.search_url;
 
-          if (searchRes.statusCode >= 400) {
-            errors.push(`Seite ${page}: HTTP ${searchRes.statusCode}`);
-            break;
+          if (isAushang) {
+            if (page > 1) break;
+            const aushangRes = await fetchWohnungsaushangTable(cfg.search_url, {
+              proxyUrl: cfg.proxy_url,
+            });
+            if (aushangRes.statusCode >= 400) {
+              errors.push(`Wohnungsaushang: HTTP ${aushangRes.statusCode}`);
+              break;
+            }
+            candidates = extractSearchListingLinks(
+              aushangRes.html,
+              cfg.search_url,
+              cfg.portal,
+              targetCity
+            );
+          } else if (isMietsofort) {
+            const msRes = await fetchMietsofortListings(targetCity, page, {
+              proxyUrl: cfg.proxy_url,
+            });
+            if (msRes.error) {
+              errors.push(`Mietsofort Seite ${page}: ${msRes.error}`);
+              break;
+            }
+            candidates = msRes.candidates;
+          } else {
+            pagedUrl = buildPagedSearchUrl(cfg.search_url, page, cfg.portal);
+            if (page > 1 && pagedUrl === cfg.search_url) break;
+            const searchRes = await fetchStealthHtml(pagedUrl, {
+              proxyUrl: cfg.proxy_url,
+              preferDesktop: true,
+            });
+
+            if (searchRes.statusCode >= 400) {
+              errors.push(`Seite ${page}: HTTP ${searchRes.statusCode}`);
+              break;
+            }
+
+            candidates = extractSearchListingLinks(
+              searchRes.html,
+              pagedUrl,
+              cfg.portal,
+              targetCity
+            );
           }
 
-          const candidates = extractSearchListingLinks(
-            searchRes.html,
-            pagedUrl,
-            cfg.portal,
-            targetCity
-          );
           if (candidates.length === 0) {
             if (page === 1) {
               errors.push(`Seite ${page}: Keine Inserat-Links extrahiert.`);
@@ -405,51 +513,55 @@ export async function runDeltaPoll({ configId = null } = {}) {
             consecutiveKnown = 0;
             let parsed = null;
 
-            // If SERP card already parsed everything (e.g. Immowelt), try detail page for NK/exact text,
-            // and fall back cleanly to SERP card if detail page is blocked (403/429).
-            await sleepJitter(cfg.jitter_min_ms, cfg.jitter_max_ms);
+            if (candidate.serpParsed && (isAushang || isMietsofort)) {
+              parsed = candidate.serpParsed;
+            } else {
+              // If SERP card already parsed everything (e.g. Immowelt), try detail page for NK/exact text,
+              // and fall back cleanly to SERP card if detail page is blocked (403/429).
+              await sleepJitter(cfg.jitter_min_ms, cfg.jitter_max_ms);
 
-            try {
-              const detailRes = await fetchStealthHtml(candidate.url, {
-                proxyUrl: cfg.proxy_url,
-                referer: pagedUrl,
-                preferDesktop: true,
-              });
+              try {
+                const detailRes = await fetchStealthHtml(candidate.url, {
+                  proxyUrl: cfg.proxy_url,
+                  referer: pagedUrl,
+                  preferDesktop: true,
+                });
 
-              const offlineCheck = isListingOfflineHtml(
-                detailRes.html,
-                detailRes.finalUrl,
-                detailRes.statusCode,
-                cfg.portal
-              );
-              if (offlineCheck.offline) {
-                continue;
-              }
+                const offlineCheck = isListingOfflineHtml(
+                  detailRes.html,
+                  detailRes.finalUrl,
+                  detailRes.statusCode,
+                  cfg.portal
+                );
+                if (offlineCheck.offline) {
+                  continue;
+                }
 
-              if (detailRes.statusCode >= 400) {
+                if (detailRes.statusCode >= 400) {
+                  if (candidate.serpParsed) {
+                    parsed = candidate.serpParsed;
+                  } else {
+                    errors.push(`${candidate.externalId}: HTTP ${detailRes.statusCode}`);
+                    continue;
+                  }
+                } else {
+                  parsed = parseListingDetail(
+                    detailRes.html,
+                    detailRes.finalUrl || candidate.url,
+                    cfg.portal,
+                    targetCity
+                  );
+                  if (!parsed.title && candidate.quickTitle) {
+                    parsed.title = candidate.quickTitle;
+                  }
+                }
+              } catch (detailErr) {
                 if (candidate.serpParsed) {
                   parsed = candidate.serpParsed;
                 } else {
-                  errors.push(`${candidate.externalId}: HTTP ${detailRes.statusCode}`);
+                  errors.push(`${candidate.externalId}: ${detailErr.message}`);
                   continue;
                 }
-              } else {
-                parsed = parseListingDetail(
-                  detailRes.html,
-                  detailRes.finalUrl || candidate.url,
-                  cfg.portal,
-                  targetCity
-                );
-                if (!parsed.title && candidate.quickTitle) {
-                  parsed.title = candidate.quickTitle;
-                }
-              }
-            } catch (detailErr) {
-              if (candidate.serpParsed) {
-                parsed = candidate.serpParsed;
-              } else {
-                errors.push(`${candidate.externalId}: ${detailErr.message}`);
-                continue;
               }
             }
 
@@ -562,6 +674,21 @@ export async function runReconciler({ batchLimit = 60 } = {}) {
     );
 
     for (const item of activeListings) {
+      if (item.external_id && item.external_id.startsWith('ge_aushang_')) {
+        const hoursSinceLastSeen = (Date.now() - new Date(item.last_seen_at).getTime()) / (1000 * 60 * 60);
+        if (hoursSinceLastSeen > 48) {
+          const { rows: offRows } = await pool.query(
+            `UPDATE listings SET status = 'offline' WHERE id = $1 RETURNING *`,
+            [item.id]
+          );
+          if (offRows[0]) {
+            await notifyWatchersListingChanged({ before: item, after: offRows[0] });
+          }
+          offlineCount++;
+        }
+        continue;
+      }
+
       await sleepJitter(3500, 9000);
       try {
         const res = await fetchStealthHtml(item.url, { preferDesktop: true });

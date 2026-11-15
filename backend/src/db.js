@@ -36,6 +36,12 @@ const QUOKA_GE_URL =
   'https://www.quoka.de/anzeigen/immobilienmarkt/vermietungen/vermietung-wohnungen/nordrhein-westfalen/gelsenkirchen/';
 const IMMOSCOUT_GE_URL =
   'https://www.immobilienscout24.de/Suche/de/nordrhein-westfalen/gelsenkirchen/wohnung-mieten?price=-850.0&sorting=2';
+const MIETSOFORT_GE_URL =
+  'https://www.mietsofort.de/mietwohnungen?city=Gelsenkirchen';
+const RENTOLA_GE_URL =
+  'https://rentola.de/mieten/gelsenkirchen';
+const WOHNUNGSAUSHANG_GE_URL =
+  'https://www.gelsenkirchen.de/de/infrastruktur/bauen_und_wohnen/wohnungsaushang.aspx';
 
 const INIT_SQL = `
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -258,6 +264,39 @@ FROM (
         'quoka'
     ),
     (
+        'other',
+        'Gelsenkirchen',
+        'MietSofort Gelsenkirchen (Mietwohnungen)',
+        '${MIETSOFORT_GE_URL}',
+        '*/30 * * * *',
+        4000,
+        15000,
+        TRUE,
+        'mietsofort'
+    ),
+    (
+        'other',
+        'Gelsenkirchen',
+        'Rentola Gelsenkirchen (Mietwohnungen)',
+        '${RENTOLA_GE_URL}',
+        '*/30 * * * *',
+        4000,
+        15000,
+        TRUE,
+        'rentola'
+    ),
+    (
+        'other',
+        'Gelsenkirchen',
+        'Kommunaler Wohnungsaushang Gelsenkirchen (Offizieller Aushang der Stadt)',
+        '${WOHNUNGSAUSHANG_GE_URL}',
+        '0 */2 * * *',
+        4000,
+        15000,
+        TRUE,
+        'wohnungsaushang'
+    ),
+    (
         'immoscout',
         'Gelsenkirchen',
         'ImmoScout24 Gelsenkirchen (Optional mit Wohn-Proxy aktivierbar, bis 850 EUR)',
@@ -282,6 +321,9 @@ WHERE NOT EXISTS (
       (v.seed_kind = 'ggw' AND sc.search_url LIKE '%ggw-gelsenkirchen.de%') OR
       (v.seed_kind = 'meinestadt' AND sc.search_url LIKE '%meinestadt.de%') OR
       (v.seed_kind = 'quoka' AND sc.search_url LIKE '%quoka.de%') OR
+      (v.seed_kind = 'mietsofort' AND sc.search_url LIKE '%mietsofort.de%') OR
+      (v.seed_kind = 'rentola' AND sc.search_url LIKE '%rentola.de%') OR
+      (v.seed_kind = 'wohnungsaushang' AND sc.search_url LIKE '%wohnungsaushang%') OR
       (v.seed_kind = 'immoscout')
     )
 )
