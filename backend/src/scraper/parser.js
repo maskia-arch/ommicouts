@@ -183,6 +183,7 @@ export function extractExternalId(url, portal = null) {
 
   if (cleanUrl.includes('mietsofort.de')) {
     const match = cleanUrl.match(/-p([a-f0-9-]+)(?:\?.*)?$/i) ||
+      cleanUrl.match(/\/mietwohnungen\/([a-f0-9-]+)/i) ||
       cleanUrl.match(/\/wohnung\/([a-f0-9-]+)/i) ||
       cleanUrl.match(/\/expose\/([a-f0-9-]+)/i);
     if (match) return `ms_${match[1]}`;
@@ -499,7 +500,7 @@ export function parseMietsofortItem(item, defaultCity = 'Gelsenkirchen') {
   const id = String(item.id || '');
   const externalId = `ms_${id}`;
   const slug = item.slug || id;
-  const url = `https://www.mietsofort.de/wohnung/${slug}`;
+  const url = `https://www.mietsofort.de/mietwohnungen/${slug}`;
   const coldRent = parseGermanNumber(item.price);
   const sqm = parseGermanNumber(item.size_sqm);
   const rooms = parseGermanNumber(item.rooms);
@@ -1459,6 +1460,9 @@ export function isListingOfflineHtml(html, finalUrl, statusCode, portal) {
   if (lowerUrl.includes('ohne-makler.net/immobilien/') && !lowerUrl.includes('/immobilie/')) {
     return { offline: true, reason: 'Redirect zur Ohne-Makler-Liste' };
   }
+  if (lowerUrl.includes('rentola.de') && !lowerUrl.includes('/listings/')) {
+    return { offline: true, reason: 'Redirect zur Rentola-Übersicht' };
+  }
   if (lowerUrl.includes('ggw-gelsenkirchen.de/mietangebote')) {
     return { offline: true, reason: 'Redirect zur GGW-Übersicht' };
   }
@@ -1472,8 +1476,13 @@ export function isListingOfflineHtml(html, finalUrl, statusCode, portal) {
 
   const lowerHtml = String(html || '').toLowerCase();
   const offlineMarkers = [
-    'anzeige nicht mehr verfügbar',
+    'inserat ist nicht mehr verfügbar',
     'anzeige ist nicht mehr verfügbar',
+    'anzeige nicht mehr verfügbar',
+    'dieses inserat wurde gelöscht',
+    'seite nicht gefunden',
+    '404 - page not found',
+    'listing is no longer available',
     'anzeige ist leider nicht mehr verfügbar',
     'diese anzeige existiert nicht mehr',
     'anzeige ist nicht mehr aktiv',

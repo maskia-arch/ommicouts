@@ -689,6 +689,41 @@ export async function runReconciler({ batchLimit = 60 } = {}) {
         continue;
       }
 
+      if (item.external_id && item.external_id.startsWith('ms_')) {
+        const rawId = item.external_id.replace(/^ms_/, '');
+        try {
+          const checkRes = await fetchStealthHtml('https://api.mietsofort.de/rest/v1/rpc/site_listing', {
+            extraHeaders: {
+              apikey: MIETSOFORT_ANON_KEY,
+              Authorization: `Bearer ${MIETSOFORT_ANON_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            json: { p_param: rawId },
+          });
+          const listingData =
+            checkRes.statusCode < 400 && typeof checkRes.html === 'string'
+              ? JSON.parse(checkRes.html)
+              : checkRes.html;
+          const isOffline = !listingData || !listingData.id;
+          if (isOffline) {
+            const { rows: offRows } = await pool.query(
+              `UPDATE listings SET status = 'offline', last_seen_at = NOW() WHERE id = $1 RETURNING *`,
+              [item.id]
+            );
+            if (offRows[0]) {
+              await notifyWatchersListingChanged({ before: item, after: offRows[0] });
+            }
+            offlineCount++;
+          } else {
+            await pool.query(`UPDATE listings SET last_seen_at = NOW() WHERE id = $1`, [item.id]);
+            updatedCount++;
+          }
+        } catch {
+          // keep existing on temporary network issue
+        }
+        continue;
+      }
+
       await sleepJitter(3500, 9000);
       try {
         const res = await fetchStealthHtml(item.url, { preferDesktop: true });

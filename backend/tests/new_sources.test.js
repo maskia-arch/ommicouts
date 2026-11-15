@@ -196,7 +196,7 @@ test('Mietsofort item parser normalizes Supabase RPC listing payload', () => {
   assert.equal(parsed.is_private_landlord, true);
   assert.equal(parsed.contact_name, 'Familie Müller');
   assert.equal(parsed.contact_phone, '0151 98765432');
-  assert.equal(parsed.url, 'https://www.mietsofort.de/wohnung/4-zimmer-wohnung-mit-89-m-in-gelsenkirchen-warendorfer-strasse-p09a17e0c');
+  assert.equal(parsed.url, 'https://www.mietsofort.de/mietwohnungen/4-zimmer-wohnung-mit-89-m-in-gelsenkirchen-warendorfer-strasse-p09a17e0c');
 });
 
 test('Cross-portal deduplication prevents duplicates between Wohnungsaushang, Kleinanzeigen, Mietsofort, and Rentola', () => {
