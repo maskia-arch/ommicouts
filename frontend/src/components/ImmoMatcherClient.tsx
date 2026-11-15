@@ -27,6 +27,7 @@ import {
   RefreshCw,
   RotateCcw,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
   User,
@@ -46,6 +47,7 @@ import type {
 } from '@/types/immo';
 import { ApplicationModal } from './ApplicationModal';
 import { AuthModal } from './AuthModal';
+import { DistrictMultiSelect, type DistrictOption } from './DistrictMultiSelect';
 import OrganizationListView from './OrganizationListView';
 import ReportListingModal from './ReportListingModal';
 import { UserAreaView } from './UserAreaView';
@@ -146,6 +148,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
   const [activeView, setActiveView] = useState<'search' | 'account' | 'org'>('search');
+  const [mobileFilterOpen, setMobileFilterOpen] = useState<boolean>(false);
 
   const fetchApplications = useCallback(async () => {
     try {
@@ -443,31 +446,59 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.limit)) : 1;
   const applicationsByListingId = new Map(applications.map((a) => [a.listing_id, a]));
 
+  const districtOptions: DistrictOption[] = (
+    city.toLowerCase() === 'gelsenkirchen'
+      ? (() => {
+          const knownNames = new Set(GELSENKIRCHEN_DISTRICT_MENU.map((x) => x.name));
+          const extra = (data?.districts || [])
+            .filter((d) => d && d !== 'Gelsenkirchen' && !knownNames.has(d))
+            .map((d) => ({ name: d, zip: '' }));
+          return [...GELSENKIRCHEN_DISTRICT_MENU, ...extra];
+        })()
+      : (data?.districts || [])
+          .filter((d) => d && d.toLowerCase() !== city.toLowerCase())
+          .map((d) => ({ name: d, zip: '' }))
+  );
+
+  const selectedDistrictsList = district === 'all' || !district
+    ? []
+    : district.split(',').map((d) => d.trim()).filter(Boolean);
+
+  const handleDistrictChange = (selected: string[]) => {
+    if (selected.length === 0) {
+      setDistrict('all');
+    } else {
+      setDistrict(selected.join(','));
+    }
+    setPage(1);
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      {/* Top Bar */}
-      <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-md">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3.5 sm:px-6">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/30">
-              <Home className="h-5 w-5" />
+      {/* Top Bar - Strictly single row (h-16) */}
+      <header className="sticky top-0 z-30 h-16 border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-md">
+        <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-4 sm:px-6">
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/30 sm:h-10 sm:w-10">
+              <Home className="h-4 w-4 sm:h-5 sm:w-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-base font-bold tracking-tight text-white sm:text-lg">
+                <span className="text-sm font-bold tracking-tight text-white sm:text-base md:text-lg">
                   KdU Wohnungs-Matcher
                 </span>
-                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300 ring-1 ring-emerald-500/30">
+                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300 ring-1 ring-emerald-500/30 sm:text-[11px]">
                   {city}
                 </span>
               </div>
-              <p className="text-xs text-slate-400">
-                Jobcenter (SGB II) &amp; Sozialamt (SGB XII) · Fokus Privatvermieter &amp; Schufa-Hilfe
+              <p className="hidden text-xs text-slate-400 sm:block">
+                Jobcenter (SGB II) &amp; Sozialamt (SGB XII) · Fokus Privatvermieter
               </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          {/* Desktop Navigation Items (hidden on mobile, handled by bottom navigation) */}
+          <div className="hidden lg:flex items-center gap-2">
             {user ? (
               <>
                 <button
@@ -486,7 +517,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                   onClick={() => setActiveView('account')}
                   className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition ${
                     activeView === 'account'
-                      ? 'bg-emerald-500 text-slate-950'
+                      ? 'bg-emerald-500 text-slate-950 font-bold'
                       : 'border border-slate-800 bg-slate-900 text-slate-200 hover:bg-slate-800'
                   }`}
                 >
@@ -507,7 +538,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                   }`}
                 >
                   <Bell className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Inbox</span>
+                  <span>Inbox</span>
                   {unreadNotificationsCount > 0 && (
                     <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
                       {unreadNotificationsCount}
@@ -520,7 +551,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                     onClick={() => setActiveView('org')}
                     className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition ${
                       activeView === 'org'
-                        ? 'bg-emerald-500 text-slate-950'
+                        ? 'bg-emerald-500 text-slate-950 font-bold'
                         : user.org_status === 'active'
                           ? 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20'
                           : 'border border-amber-500/50 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25'
@@ -530,7 +561,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                     Wohnungsliste (Org)
                   </button>
                 )}
-                <span className="hidden items-center rounded-xl border border-slate-800 bg-slate-900/70 px-2.5 py-2 text-xs text-slate-300 md:inline-flex">
+                <span className="inline-flex items-center rounded-xl border border-slate-800 bg-slate-900/70 px-2.5 py-2 text-xs text-slate-300 max-w-[150px] truncate">
                   {user.email}
                 </span>
                 <button
@@ -540,7 +571,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                   className="inline-flex items-center gap-1.5 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-rose-500/40 hover:text-rose-200"
                 >
                   <LogOut className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Abmelden</span>
+                  <span>Abmelden</span>
                 </button>
               </>
             ) : (
@@ -568,20 +599,37 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                 </button>
               </>
             )}
+          </div>
 
-            <button
-              onClick={fetchListings}
-              disabled={loading}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-slate-700 hover:bg-slate-800 disabled:opacity-50"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">Aktualisieren</span>
-            </button>
+          {/* Mobile Right Controls: Compact Quick Auth Icon / Status */}
+          <div className="flex lg:hidden items-center gap-2">
+            {!user ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthModalMode('login');
+                  setAuthModalOpen(true);
+                }}
+                className="inline-flex items-center gap-1 rounded-xl bg-emerald-500 px-3 py-1.5 text-xs font-bold text-slate-950"
+              >
+                <LogIn className="h-3.5 w-3.5" />
+                <span>Login</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleLogout}
+                title="Abmelden"
+                className="inline-flex items-center gap-1 rounded-xl border border-slate-800 bg-slate-900 p-2 text-xs text-slate-400 hover:text-rose-300"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            )}
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6 sm:py-8">
+      <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 sm:py-8 pb-24 lg:pb-12">
         {user && user.account_type === 'organization' && user.org_status !== 'active' && (
           <div className="flex flex-col justify-between gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 sm:flex-row sm:items-center">
             <div className="flex items-start gap-3">
@@ -685,446 +733,417 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
               </div>
             )}
 
-            {/* Hero + Interactive Configurator */}
-        <section className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 p-4 shadow-xl sm:p-6">
-          <div className="mb-5 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
-            <div>
-              <h1 className="text-xl font-bold text-white sm:text-2xl">
-                Jobcenter-konforme Wohnungen in {city} finden
-              </h1>
-              <p className="mt-1 text-sm text-slate-400">
-                Automatisch geprüft gegen die aktuellen KdU-Richtlinien (Bruttokaltmiete &amp;
-                Produkttheorie) – inklusive Direktabtretungs-Anschreiben bei negativer Schufa.
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
-            {/* Stadt */}
-            <div className="md:col-span-3">
-              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">
-                Stadt / Kommune
-              </label>
-              <select
-                value={city}
-                onChange={(e) => {
-                  setCity(e.target.value);
-                  setDistrict('all');
-                  setPage(1);
-                }}
-                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm font-medium text-white focus:border-emerald-500 focus:outline-none"
-              >
-                {cities.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Leistungsart */}
-            <div className="md:col-span-4">
-              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">
-                Leistungsart
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setBenefitType('sgb2')}
-                  className={`rounded-xl border px-3 py-2.5 text-left text-xs font-semibold transition sm:text-sm ${
-                    benefitType === 'sgb2'
-                      ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300'
-                      : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700'
-                  }`}
-                >
-                  <div>Bürgergeld</div>
-                  <div className="text-[11px] font-normal opacity-80">SGB II · Jobcenter</div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setBenefitType('sgb12')}
-                  className={`rounded-xl border px-3 py-2.5 text-left text-xs font-semibold transition sm:text-sm ${
-                    benefitType === 'sgb12'
-                      ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300'
-                      : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700'
-                  }`}
-                >
-                  <div>Grundsicherung</div>
-                  <div className="text-[11px] font-normal opacity-80">SGB XII · Sozialamt</div>
-                </button>
-              </div>
-            </div>
-
-            {/* Bedarfsgemeinschaft */}
-            <div className="md:col-span-5">
-              <label className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
-                <Users className="h-3.5 w-3.5" />
-                Größe der Bedarfsgemeinschaft (Personen)
-              </label>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {[1, 2, 3, 4, 5, 6].map((num) => (
-                  <button
-                    key={num}
-                    type="button"
-                    onClick={() => {
-                      setBgSize(num);
-                      setPage(1);
-                    }}
-                    className={`h-10 min-w-[42px] flex-1 rounded-xl border text-sm font-bold transition ${
-                      bgSize === num
-                        ? 'border-emerald-500 bg-emerald-500 text-slate-950 shadow-sm shadow-emerald-500/30'
-                        : 'border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700'
-                    }`}
-                  >
-                    {num === 6 && bgSize > 6 ? `${bgSize}` : num === 6 ? '6+' : num}
-                  </button>
-                ))}
-                <div className="flex items-center rounded-xl border border-slate-800 bg-slate-950 p-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setBgSize((prev) => Math.max(1, prev - 1));
-                      setPage(1);
-                    }}
-                    aria-label="Person weniger"
-                    className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
-                  >
-                    <Minus className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setBgSize((prev) => Math.min(12, prev + 1));
-                      setPage(1);
-                    }}
-                    aria-label="Weitere Person"
-                    className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Prominent Toggles */}
-          <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2">
-            <button
-              type="button"
-              onClick={() => {
-                setPrivateOnly((v) => !v);
-                setPage(1);
-              }}
-              className={`flex items-center justify-between rounded-xl border p-3.5 text-left transition ${
-                privateOnly
-                  ? 'border-amber-400/80 bg-amber-500/15 shadow-lg shadow-amber-500/10'
-                  : 'border-amber-500/30 bg-slate-950/80 hover:border-amber-400/50'
-              }`}
-            >
-              <div className="flex items-start gap-3">
-                <div
-                  className={`mt-0.5 rounded-lg p-2 ${
-                    privateOnly ? 'bg-amber-400 text-slate-950' : 'bg-amber-500/15 text-amber-300'
-                  }`}
-                >
-                  <UserCheck className="h-4 w-4" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2 text-sm font-bold text-white">
-                    Nur private Vermieter anzeigen
-                    <span className="rounded-full bg-amber-400/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300">
-                      Schufa-Tipp
-                    </span>
-                  </div>
-                  <p className="mt-0.5 text-xs text-slate-400">
-                    Privatvermieter entscheiden oft menschlicher und akzeptieren Direktabtretung.
-                  </p>
-                </div>
-              </div>
-              <div
-                className={`ml-3 h-6 w-11 shrink-0 rounded-full p-0.5 transition ${
-                  privateOnly ? 'bg-amber-400' : 'bg-slate-700'
-                }`}
-              >
-                <div
-                  className={`h-5 w-5 rounded-full bg-white transition-transform ${
-                    privateOnly ? 'translate-x-5' : 'translate-x-0'
-                  }`}
-                />
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setIncludeTolerance((v) => !v);
-                setPage(1);
-              }}
-              className={`flex items-center justify-between rounded-xl border p-3.5 text-left transition ${
-                includeTolerance
-                  ? 'border-sky-400/70 bg-sky-500/15'
-                  : 'border-slate-800 bg-slate-950/80 hover:border-slate-700'
-              }`}
-            >
-              <div className="flex items-start gap-3">
-                <div
-                  className={`mt-0.5 rounded-lg p-2 ${
-                    includeTolerance ? 'bg-sky-400 text-slate-950' : 'bg-slate-800 text-slate-300'
-                  }`}
-                >
-                  <Sparkles className="h-4 w-4" />
-                </div>
-                <div>
-                  <div className="text-sm font-bold text-white">
-                    Auch geringen Eigenanteil (+10 % Toleranz) zeigen
-                  </div>
-                  <p className="mt-0.5 text-xs text-slate-400">
-                    Erweitert die Suche bis {formatEur(activeRule.max_bruttokalt_eur * 1.1)} Bruttokaltmiete.
-                  </p>
-                </div>
-              </div>
-              <div
-                className={`ml-3 h-6 w-11 shrink-0 rounded-full p-0.5 transition ${
-                  includeTolerance ? 'bg-sky-400' : 'bg-slate-700'
-                }`}
-              >
-                <div
-                  className={`h-5 w-5 rounded-full bg-white transition-transform ${
-                    includeTolerance ? 'translate-x-5' : 'translate-x-0'
-                  }`}
-                />
-              </div>
-            </button>
-          </div>
-        </section>
-
-        {/* Klickbares Stadtteil-Menü + Filteroptionen (über dem Limit-Banner) */}
-        <section className="space-y-3 rounded-2xl border border-slate-800/80 bg-slate-900/60 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
-                <MapPin className="h-3.5 w-3.5 text-emerald-400" />
-                Stadtteil in {city} wählen:
-              </span>
-              {district !== 'all' && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDistrict('all');
-                    setPage(1);
-                  }}
-                  className="text-xs font-medium text-emerald-300 hover:text-emerald-200"
-                >
-                  Zurücksetzen ({district})
-                </button>
-              )}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                <Filter className="h-3.5 w-3.5" />
-              </div>
-              <select
-                value={wbs}
-                onChange={(e) => {
-                  setWbs(e.target.value as 'all' | 'without' | 'only');
-                  setPage(1);
-                }}
-                className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs font-medium text-slate-200 focus:border-emerald-500 focus:outline-none"
-              >
-                <option value="all">WBS: Alle</option>
-                <option value="without">Nur ohne WBS</option>
-                <option value="only">Nur mit WBS</option>
-              </select>
-
-              <select
-                value={sort}
-                onChange={(e) => {
-                  setSort(e.target.value as 'newest' | 'cheapest' | 'largest');
-                  setPage(1);
-                }}
-                className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs font-medium text-slate-200 focus:border-emerald-500 focus:outline-none"
-              >
-                <option value="newest">Neueste zuerst</option>
-                <option value="cheapest">Günstigste Bruttokalt</option>
-                <option value="largest">Größte m²</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-1.5">
-            <button
-              type="button"
-              onClick={() => {
-                setDistrict('all');
-                setPage(1);
-              }}
-              className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
-                district === 'all'
-                  ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/50'
-                  : 'border border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700 hover:text-white'
-              }`}
-            >
-              Alle Stadtteile
-            </button>
-
-            {(city.toLowerCase() === 'gelsenkirchen'
-              ? (() => {
-                  const knownNames = new Set(GELSENKIRCHEN_DISTRICT_MENU.map((x) => x.name));
-                  const extra = (data?.districts || [])
-                    .filter((d) => d && d !== 'Gelsenkirchen' && !knownNames.has(d))
-                    .map((d) => ({ name: d, zip: '' }));
-                  return [...GELSENKIRCHEN_DISTRICT_MENU, ...extra];
-                })()
-              : (data?.districts || [])
-                  .filter((d) => d && d.toLowerCase() !== city.toLowerCase())
-                  .map((d) => ({ name: d, zip: '' }))
-            ).map((entry) => {
-              const active = district.toLowerCase() === entry.name.toLowerCase();
-              return (
-                <button
-                  key={entry.name}
-                  type="button"
-                  onClick={() => {
-                    setDistrict(active ? 'all' : entry.name);
-                    setPage(1);
-                  }}
-                  className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
-                    active
-                      ? 'bg-emerald-500 text-slate-950 font-bold'
-                      : 'border border-slate-800 bg-slate-950/90 text-slate-300 hover:border-emerald-500/40 hover:text-white'
-                  }`}
-                >
-                  <span>{entry.name}</span>
-                  {entry.zip && (
-                    <span
-                      className={`text-[10px] ${
-                        active ? 'text-slate-900/80' : 'text-slate-500'
-                      }`}
-                    >
-                      {entry.zip}
+            {/* Mobile Sticky Summary Bar + Filter Trigger (< 1024px) */}
+            <div className="sticky top-16 z-20 -mx-4 -mt-2 mb-4 border-y border-slate-800/80 bg-slate-950/95 px-4 py-2.5 backdrop-blur-md lg:hidden">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 overflow-hidden text-xs">
+                  <span className="font-bold text-white truncate">{city}</span>
+                  <span className="text-slate-600">·</span>
+                  <span className="font-medium text-emerald-300 whitespace-nowrap">
+                    {bgSize} {bgSize === 1 ? 'Pers.' : 'Pers.'}
+                  </span>
+                  <span className="text-slate-600">·</span>
+                  <span className="text-slate-400 truncate">
+                    {district === 'all' || !district
+                      ? 'Alle Stadtteile'
+                      : district.includes(',')
+                        ? `${district.split(',').length} Stadtteile`
+                        : district}
+                  </span>
+                  {privateOnly && (
+                    <span className="hidden xs:inline-flex rounded bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">
+                      Privat
                     </span>
                   )}
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
-        {/* Transparenz-Ampel Banner */}
-        <section className="rounded-2xl border border-emerald-500/30 bg-emerald-950/30 p-4 sm:px-6">
-          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-            <div className="flex items-start gap-3">
-              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
-              <div>
-                <p className="text-sm font-bold text-emerald-200 sm:text-base">
-                  Dein Limit in {city} bei {bgSize}{' '}
-                  {bgSize === 1 ? 'Person' : 'Personen'}: max. {activeRule.max_sqm} m² &amp;{' '}
-                  <span className="text-white underline decoration-emerald-400 underline-offset-4">
-                    {formatEur(activeRule.max_bruttokalt_eur)} Bruttokaltmiete
-                  </span>
-                </p>
-                <p className="mt-0.5 text-xs text-emerald-300/80">
-                  Bruttokaltmiete = Kaltmiete + kalte Betriebskosten (ohne Heizkosten).
-                  {includeTolerance && data?.tolerance_limit_eur
-                    ? ` Mit +10 % Toleranz bis ${formatEur(data.tolerance_limit_eur)}.`
-                    : ' Nach BSG-Produkttheorie zählt primär die Gesamtsumme Bruttokalt.'}
-                </p>
-              </div>
-            </div>
-            {data && (
-              <div className="flex shrink-0 items-center gap-2 text-xs">
-                <span className="rounded-lg bg-slate-900/90 px-3 py-1.5 font-semibold text-white ring-1 ring-slate-700">
-                  {data.total} Treffer
-                </span>
-                <span className="rounded-lg bg-amber-500/15 px-3 py-1.5 font-semibold text-amber-300 ring-1 ring-amber-500/30">
-                  {data.private_count} Privat
-                </span>
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* Sichtbarer Hinweis & Rückgängig-Funktion für ausgeblendete Wohnungen */}
-        {user && (hideToast || hiddenListings.length > 0) && (
-          <div className="space-y-2">
-            {hideToast && (
-              <div className="flex flex-col justify-between gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-100 sm:flex-row sm:items-center">
-                <div className="flex items-center gap-2">
-                  <EyeOff className="h-4 w-4 shrink-0 text-amber-300" />
-                  <span>
-                    Anzeige <strong className="text-white">„{hideToast.title}“</strong> wurde aus deiner Übersicht ausgeblendet.
-                  </span>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={unhidingId === hideToast.listingId}
-                    onClick={() => unhideListing(hideToast.listingId)}
-                    className="inline-flex items-center gap-1 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-slate-950 transition hover:bg-amber-400 disabled:opacity-50"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    Rückgängig machen
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setHideToast(null)}
-                    aria-label="Hinweis schließen"
-                    className="rounded-lg p-1 text-amber-200/80 hover:bg-amber-500/20 hover:text-white"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-            )}
 
-            {hiddenListings.length > 0 && (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-2.5 text-xs text-slate-300">
-                <div className="flex items-center gap-2">
-                  <EyeOff className="h-3.5 w-3.5 text-slate-400" />
-                  <span>
-                    <strong className="text-white">{hiddenListings.length}</strong>{' '}
-                    {hiddenListings.length === 1
-                      ? 'Wohnung ist aktuell von dir ausgeblendet'
-                      : 'Wohnungen sind aktuell von dir ausgeblendet'}
-                    .
-                  </span>
-                </div>
                 <button
                   type="button"
-                  onClick={() => setHiddenModalOpen(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1 text-xs font-semibold text-emerald-300 transition hover:border-emerald-500/40 hover:bg-slate-700"
+                  onClick={() => setMobileFilterOpen(true)}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-emerald-500/50 bg-emerald-500/15 px-3 py-1.5 text-xs font-bold text-emerald-200 transition hover:bg-emerald-500/25 active:scale-95"
                 >
-                  <Eye className="h-3.5 w-3.5" />
-                  Ausgeblendete verwalten / wieder einblenden
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  <span>Filter anpassen</span>
                 </button>
               </div>
-            )}
-          </div>
-        )}
+            </div>
 
-        {/* Error */}
-        {error && (
-          <div className="flex items-center gap-3 rounded-2xl border border-rose-500/40 bg-rose-950/30 p-4 text-sm text-rose-200">
-            <AlertTriangle className="h-5 w-5 shrink-0 text-rose-400" />
-            <span>{error}</span>
-          </div>
-        )}
+            {/* Main 2-Column Cockpit Grid (lg: 360px sidebar + 1fr content) */}
+            <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[360px_1fr]">
+              {/* Left Column: Sticky Desktop Filter Sidebar */}
+              <aside className="hidden lg:block sticky top-20 z-10 space-y-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+                <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                  <div className="flex items-center gap-2">
+                    <SlidersHorizontal className="h-4 w-4 text-emerald-400" />
+                    <h2 className="text-sm font-bold uppercase tracking-wider text-white">
+                      Such-Cockpit
+                    </h2>
+                  </div>
+                  <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300 ring-1 ring-emerald-500/30">
+                    {city}
+                  </span>
+                </div>
 
-        {/* Results Grid */}
-        {!loading && data && data.items.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-900/40 p-10 text-center">
-            <Building2 className="mx-auto h-10 w-10 text-slate-600" />
-            <h2 className="mt-3 text-base font-bold text-white">
-              Aktuell keine passenden Inserate für diese Filter
-            </h2>
-            <p className="mx-auto mt-1 max-w-md text-xs text-slate-400">
-              Tipp: Aktiviere die +10 % Eigenanteil-Toleranz oder deaktiviere vorübergehend einen
-              Stadtteil-Filter. Der Crawler prüft alle 20 Minuten automatisch auf neue Angebote.
-            </p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                {/* 1. Stadt */}
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    Stadt / Kommune
+                  </label>
+                  <select
+                    value={city}
+                    onChange={(e) => {
+                      setCity(e.target.value);
+                      setDistrict('all');
+                      setPage(1);
+                    }}
+                    className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-medium text-white focus:border-emerald-500 focus:outline-none"
+                  >
+                    {cities.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 2. Stadtteil Multi-Select mit Suchfeld */}
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    Stadtteile in {city}
+                  </label>
+                  <DistrictMultiSelect
+                    city={city}
+                    options={districtOptions}
+                    selectedDistricts={selectedDistrictsList}
+                    onChange={handleDistrictChange}
+                  />
+                </div>
+
+                {/* 3. Leistungsart */}
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    Leistungsart
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setBenefitType('sgb2')}
+                      className={`rounded-xl border p-2.5 text-left text-xs font-semibold transition ${
+                        benefitType === 'sgb2'
+                          ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/40'
+                          : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="font-bold">Bürgergeld</div>
+                      <div className="text-[10px] font-normal text-slate-500">SGB II · Jobcenter</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBenefitType('sgb12')}
+                      className={`rounded-xl border p-2.5 text-left text-xs font-semibold transition ${
+                        benefitType === 'sgb12'
+                          ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/40'
+                          : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="font-bold">Grundsicherung</div>
+                      <div className="text-[10px] font-normal text-slate-500">SGB XII · Sozialamt</div>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 4. Bedarfsgemeinschaft (1–6+) */}
+                <div>
+                  <label className="mb-1.5 flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    <span className="flex items-center gap-1.5">
+                      <Users className="h-3.5 w-3.5 text-emerald-400" />
+                      Personen im Haushalt
+                    </span>
+                    <span className="text-emerald-300 font-bold">{bgSize} {bgSize === 1 ? 'Person' : 'Personen'}</span>
+                  </label>
+                  <div className="grid grid-cols-6 gap-1">
+                    {[1, 2, 3, 4, 5, 6].map((num) => (
+                      <button
+                        key={num}
+                        type="button"
+                        onClick={() => {
+                          setBgSize(num);
+                          setPage(1);
+                        }}
+                        className={`h-9 rounded-lg border text-xs font-bold transition ${
+                          bgSize === num
+                            ? 'border-emerald-500 bg-emerald-500 text-slate-950 shadow-sm shadow-emerald-500/30'
+                            : 'border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700'
+                        }`}
+                      >
+                        {num === 6 && bgSize > 6 ? `${bgSize}` : num === 6 ? '6+' : num}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-1.5 flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1 text-xs text-slate-400">
+                    <span>Größere BG anpassen:</span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBgSize((prev) => Math.max(1, prev - 1));
+                          setPage(1);
+                        }}
+                        aria-label="Person weniger"
+                        className="rounded p-1 hover:bg-slate-800 hover:text-white"
+                      >
+                        <Minus className="h-3.5 w-3.5" />
+                      </button>
+                      <span className="min-w-[20px] text-center font-bold text-white">{bgSize}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBgSize((prev) => Math.min(12, prev + 1));
+                          setPage(1);
+                        }}
+                        aria-label="Weitere Person"
+                        className="rounded p-1 hover:bg-slate-800 hover:text-white"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 5. Toggles ("Nur private Vermieter" & "+10 % Toleranz") */}
+                <div className="space-y-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPrivateOnly((v) => !v);
+                      setPage(1);
+                    }}
+                    className={`flex w-full items-center justify-between rounded-xl border p-2.5 text-left transition ${
+                      privateOnly
+                        ? 'border-amber-400/80 bg-amber-500/15 shadow-sm shadow-amber-500/20'
+                        : 'border-slate-800 bg-slate-950 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <UserCheck className={`h-4 w-4 ${privateOnly ? 'text-amber-400' : 'text-slate-400'}`} />
+                      <div>
+                        <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                          Nur von Privat
+                          <span className="rounded bg-amber-400/20 px-1.5 py-0.2 text-[9px] font-bold text-amber-300">
+                            Schufa-Tipp
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-400">Direktabtretung oft möglich</div>
+                      </div>
+                    </div>
+                    <div
+                      className={`h-5 w-9 shrink-0 rounded-full p-0.5 transition ${
+                        privateOnly ? 'bg-amber-400' : 'bg-slate-700'
+                      }`}
+                    >
+                      <div
+                        className={`h-4 w-4 rounded-full bg-white transition-transform ${
+                          privateOnly ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                      />
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIncludeTolerance((v) => !v);
+                      setPage(1);
+                    }}
+                    className={`flex w-full items-center justify-between rounded-xl border p-2.5 text-left transition ${
+                      includeTolerance
+                        ? 'border-sky-400/80 bg-sky-500/15 shadow-sm shadow-sky-500/20'
+                        : 'border-slate-800 bg-slate-950 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Sparkles className={`h-4 w-4 ${includeTolerance ? 'text-sky-400' : 'text-slate-400'}`} />
+                      <div>
+                        <div className="text-xs font-bold text-white">+10 % Toleranz</div>
+                        <div className="text-[10px] text-slate-400">
+                          bis {formatEur(activeRule.max_bruttokalt_eur * 1.1)} BK
+                        </div>
+                      </div>
+                    </div>
+                    <div
+                      className={`h-5 w-9 shrink-0 rounded-full p-0.5 transition ${
+                        includeTolerance ? 'bg-sky-400' : 'bg-slate-700'
+                      }`}
+                    >
+                      <div
+                        className={`h-4 w-4 rounded-full bg-white transition-transform ${
+                          includeTolerance ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                      />
+                    </div>
+                  </button>
+                </div>
+
+                {/* 6. Kompakte KdU-Obergrenzen-Box */}
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-3 text-xs text-emerald-100">
+                  <div className="flex items-center gap-1.5 font-bold text-emerald-300">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                    <span>KdU-Limit ({city}, {bgSize} {bgSize === 1 ? 'Pers.' : 'Pers.'}):</span>
+                  </div>
+                  <div className="mt-1 flex items-baseline justify-between">
+                    <span className="text-slate-400">Max. Wohnfläche:</span>
+                    <span className="font-semibold text-white">{activeRule.max_sqm} m²</span>
+                  </div>
+                  <div className="mt-0.5 flex items-baseline justify-between">
+                    <span className="text-slate-400">Bruttokaltmiete:</span>
+                    <span className="font-bold text-emerald-300 text-sm">
+                      {formatEur(activeRule.max_bruttokalt_eur)}
+                    </span>
+                  </div>
+                  {includeTolerance && data?.tolerance_limit_eur && (
+                    <div className="mt-0.5 flex items-baseline justify-between text-[11px] text-sky-300">
+                      <span>Mit +10 % Toleranz:</span>
+                      <span className="font-semibold">{formatEur(data.tolerance_limit_eur)}</span>
+                    </div>
+                  )}
+                </div>
+              </aside>
+
+              {/* Right Column: Search Results Content */}
+              <div className="space-y-4 min-w-0">
+                {/* Result Control Bar: Count + WBS + Sort + Refresh Icon Button */}
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900/80 p-3.5 sm:px-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-white">
+                      {data ? `${data.total} passende Wohnungen` : 'Suche Wohnungen...'}
+                    </span>
+                    {data && data.private_count > 0 && (
+                      <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-300 ring-1 ring-amber-500/30">
+                        {data.private_count} von Privat
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={wbs}
+                      onChange={(e) => {
+                        setWbs(e.target.value as 'all' | 'without' | 'only');
+                        setPage(1);
+                      }}
+                      className="rounded-xl border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs font-medium text-slate-200 focus:border-emerald-500 focus:outline-none"
+                    >
+                      <option value="all">WBS: Alle</option>
+                      <option value="without">Ohne WBS</option>
+                      <option value="only">Nur WBS</option>
+                    </select>
+
+                    <select
+                      value={sort}
+                      onChange={(e) => {
+                        setSort(e.target.value as 'newest' | 'cheapest' | 'largest');
+                        setPage(1);
+                      }}
+                      className="rounded-xl border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs font-medium text-slate-200 focus:border-emerald-500 focus:outline-none"
+                    >
+                      <option value="newest">Neueste zuerst</option>
+                      <option value="cheapest">Günstigste Bruttokalt</option>
+                      <option value="largest">Größte m²</option>
+                    </select>
+
+                    <button
+                      type="button"
+                      onClick={fetchListings}
+                      disabled={loading}
+                      title="Ergebnisse aktualisieren"
+                      aria-label="Ergebnisse aktualisieren"
+                      className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-700 bg-slate-950 text-slate-300 transition hover:border-emerald-500/50 hover:bg-slate-800 hover:text-white disabled:opacity-50"
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin text-emerald-400' : ''}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Visible Notice & Undo for Hidden Listings */}
+                {user && (hideToast || hiddenListings.length > 0) && (
+                  <div className="space-y-2">
+                    {hideToast && (
+                      <div className="flex flex-col justify-between gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-100 sm:flex-row sm:items-center">
+                        <div className="flex items-center gap-2">
+                          <EyeOff className="h-4 w-4 shrink-0 text-amber-300" />
+                          <span>
+                            Anzeige <strong className="text-white">„{hideToast.title}“</strong> wurde aus deiner Übersicht ausgeblendet.
+                          </span>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={unhidingId === hideToast.listingId}
+                            onClick={() => unhideListing(hideToast.listingId)}
+                            className="inline-flex items-center gap-1 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-slate-950 transition hover:bg-amber-400 disabled:opacity-50"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            Rückgängig machen
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setHideToast(null)}
+                            aria-label="Hinweis schließen"
+                            className="rounded-lg p-1 text-amber-200/80 hover:bg-amber-500/20 hover:text-white"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {hiddenListings.length > 0 && (
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-2.5 text-xs text-slate-300">
+                        <div className="flex items-center gap-2">
+                          <EyeOff className="h-3.5 w-3.5 text-slate-400" />
+                          <span>
+                            <strong className="text-white">{hiddenListings.length}</strong>{' '}
+                            {hiddenListings.length === 1
+                              ? 'Wohnung ist aktuell von dir ausgeblendet'
+                              : 'Wohnungen sind aktuell von dir ausgeblendet'}
+                            .
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setHiddenModalOpen(true)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1 text-xs font-semibold text-emerald-300 transition hover:border-emerald-500/40 hover:bg-slate-700"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          Ausgeblendete verwalten / wieder einblenden
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Error */}
+                {error && (
+                  <div className="flex items-center gap-3 rounded-2xl border border-rose-500/40 bg-rose-950/30 p-4 text-sm text-rose-200">
+                    <AlertTriangle className="h-5 w-5 shrink-0 text-rose-400" />
+                    <span>{error}</span>
+                  </div>
+                )}
+
+                {/* Results Grid - Responsive 2-Col on Desktop, 1-Col on Mobile */}
+                {!loading && data && data.items.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-900/40 p-10 text-center">
+                    <Building2 className="mx-auto h-10 w-10 text-slate-600" />
+                    <h2 className="mt-3 text-base font-bold text-white">
+                      Aktuell keine passenden Inserate für diese Filter
+                    </h2>
+                    <p className="mx-auto mt-1 max-w-md text-xs text-slate-400">
+                      Tipp: Aktiviere die +10 % Eigenanteil-Toleranz oder wähle weitere Stadtteile
+                      aus. Der Crawler prüft alle 20 Minuten automatisch auf neue Angebote.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             {(data?.items || []).map((item) => (
               <article
                 key={item.id}
@@ -1283,7 +1302,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                         disabled
                         aria-disabled="true"
                         title="Bitte zuerst anmelden, um den Bewerbungstext & Kontakt zu nutzen"
-                        className="inline-flex cursor-not-allowed items-center justify-center gap-1.5 rounded-xl border border-slate-800 bg-slate-900/70 px-3.5 py-2.5 text-xs font-semibold text-slate-500 opacity-75"
+                        className="inline-flex min-h-[44px] cursor-not-allowed items-center justify-center gap-1.5 rounded-xl border border-slate-800 bg-slate-900/70 px-3.5 py-2.5 text-xs font-semibold text-slate-500 opacity-75"
                       >
                         <Lock className="h-3.5 w-3.5" />
                         Bewerbungstext (Login nötig)
@@ -1294,7 +1313,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                         disabled
                         aria-disabled="true"
                         title="Bitte zuerst anmelden, um zur Originalanzeige zu gelangen"
-                        className="inline-flex cursor-not-allowed items-center justify-center gap-1.5 rounded-xl border border-slate-800 bg-slate-900/70 px-3.5 py-2.5 text-xs font-semibold text-slate-500 opacity-75"
+                        className="inline-flex min-h-[44px] cursor-not-allowed items-center justify-center gap-1.5 rounded-xl border border-slate-800 bg-slate-900/70 px-3.5 py-2.5 text-xs font-semibold text-slate-500 opacity-75"
                       >
                         <Lock className="h-3.5 w-3.5" />
                         Originalanzeige (Login nötig)
@@ -1313,7 +1332,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                                   type="button"
                                   disabled={isBusy}
                                   onClick={() => setListingStatus(item, 'saved')}
-                                  className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-xs font-semibold text-sky-200 transition hover:bg-sky-500/20 disabled:opacity-50"
+                                  className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-xs font-semibold text-sky-200 transition hover:bg-sky-500/20 disabled:opacity-50"
                                 >
                                   <BookmarkPlus className="h-3.5 w-3.5" />
                                   {isBusy ? 'Speichere...' : 'Wohnung merken'}
@@ -1327,7 +1346,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                                       setListingStatus(item, e.target.value as ApplicationStatus);
                                     }
                                   }}
-                                  className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 focus:border-emerald-500 focus:outline-none disabled:opacity-50"
+                                  className="min-h-[36px] rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 focus:border-emerald-500 focus:outline-none disabled:opacity-50"
                                 >
                                   <option value="" disabled>
                                     Stand markieren...
@@ -1356,7 +1375,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                                         tracked
                                       )
                                     }
-                                    className="rounded-lg border border-sky-500/40 bg-slate-900 px-2 py-1 text-xs font-semibold text-sky-200 focus:border-emerald-500 focus:outline-none disabled:opacity-50"
+                                    className="min-h-[36px] rounded-lg border border-sky-500/40 bg-slate-900 px-2 py-1 text-xs font-semibold text-sky-200 focus:border-emerald-500 focus:outline-none disabled:opacity-50"
                                   >
                                     {APP_STATUS_OPTIONS.map((opt) => (
                                       <option key={opt.value} value={opt.value}>
@@ -1369,7 +1388,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                                     disabled={isBusy}
                                     onClick={() => removeListingStatus(item, tracked)}
                                     title="Aus Merkliste / Status entfernen"
-                                    className="rounded-lg border border-slate-800 bg-slate-900 p-1.5 text-slate-400 transition hover:border-rose-500/40 hover:text-rose-300 disabled:opacity-50"
+                                    className="min-h-[36px] min-w-[36px] inline-flex items-center justify-center rounded-lg border border-slate-800 bg-slate-900 p-1.5 text-slate-400 transition hover:border-rose-500/40 hover:text-rose-300 disabled:opacity-50"
                                   >
                                     <Trash2 className="h-3.5 w-3.5" />
                                   </button>
@@ -1384,20 +1403,20 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                         <button
                           type="button"
                           onClick={() => setSelectedListing(item)}
-                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3.5 py-2.5 text-xs font-bold text-amber-300 transition hover:bg-amber-500/20"
+                          className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3.5 py-2.5 text-xs font-bold text-amber-300 transition hover:bg-amber-500/20 active:scale-[0.99]"
                         >
-                          <ShieldCheck className="h-4 w-4" />
-                          Bewerbung &amp; Anschreiben
+                          <ShieldCheck className="h-4 w-4 shrink-0" />
+                          <span>Bewerbung &amp; Anschreiben</span>
                         </button>
 
                         <a
                           href={item.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-2.5 text-xs font-bold text-slate-950 transition hover:bg-emerald-400"
+                          className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-2.5 text-xs font-bold text-slate-950 transition hover:bg-emerald-400 active:scale-[0.99]"
                         >
-                          Zur Originalanzeige
-                          <ExternalLink className="h-3.5 w-3.5" />
+                          <span>Zur Originalanzeige</span>
+                          <ExternalLink className="h-3.5 w-3.5 shrink-0" />
                         </a>
                       </div>
 
@@ -1452,30 +1471,32 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
             </button>
           </div>
         )}
-
-        {/* Legal & Info Footer */}
-        <footer className="rounded-2xl border border-slate-800/80 bg-slate-900/40 p-5 text-xs text-slate-400">
-          <div className="flex items-start gap-2.5">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
-            <div className="space-y-1.5 leading-relaxed">
-              <p className="font-semibold text-slate-200">
-                Hinweis zu KdU-Richtwerten, Produkttheorie &amp; Direktabtretung
-              </p>
-              <p>
-                Alle angezeigten Werte dienen als Orientierung auf Basis der aktuellen
-                KdU-Angemessenheitsgrenzen. Maßgeblich für die Zusicherung ist immer die
-                schriftliche Prüfung durch das zuständige Jobcenter bzw. Sozialamt vor
-                Mietvertragsunterschrift. Heizkosten werden separat nach tatsächlicher Angemessenheit
-                übernommen.
-              </p>
-              <p className="text-slate-500">
-                Rechtlicher Hinweis: Diese Plattform speichert und veröffentlicht keine fremden
-                Inseratsbilder oder Volltexte, sondern verweist per Direktlink ausschließlich auf die
-                jeweiligen Originalangebote.
-              </p>
+              </div>
             </div>
-          </div>
-        </footer>
+
+            {/* Legal & Info Footer */}
+            <footer className="rounded-2xl border border-slate-800/80 bg-slate-900/40 p-5 text-xs text-slate-400">
+              <div className="flex items-start gap-2.5">
+                <Info className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+                <div className="space-y-1.5 leading-relaxed">
+                  <p className="font-semibold text-slate-200">
+                    Hinweis zu KdU-Richtwerten, Produkttheorie &amp; Direktabtretung
+                  </p>
+                  <p>
+                    Alle angezeigten Werte dienen als Orientierung auf Basis der aktuellen
+                    KdU-Angemessenheitsgrenzen. Maßgeblich für die Zusicherung ist immer die
+                    schriftliche Prüfung durch das zuständige Jobcenter bzw. Sozialamt vor
+                    Mietvertragsunterschrift. Heizkosten werden separat nach tatsächlicher Angemessenheit
+                    übernommen.
+                  </p>
+                  <p className="text-slate-500">
+                    Rechtlicher Hinweis: Diese Plattform speichert und veröffentlicht keine fremden
+                    Inseratsbilder oder Volltexte, sondern verweist per Direktlink ausschließlich auf die
+                    jeweiligen Originalangebote.
+                  </p>
+                </div>
+              </div>
+            </footer>
           </>
         )}
       </main>
@@ -1626,6 +1647,362 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
           </div>
         </div>
       )}
+
+      {/* Mobile Bottom-Sheet / Slide-Up Drawer for Filters (< 1024px) */}
+      {mobileFilterOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col justify-end lg:hidden">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/75 backdrop-blur-sm transition-opacity"
+            onClick={() => setMobileFilterOpen(false)}
+            aria-hidden="true"
+          />
+
+          {/* Drawer Container */}
+          <div className="relative z-10 flex max-h-[88vh] w-full flex-col rounded-t-3xl border-t border-slate-700 bg-slate-900 shadow-2xl animate-in slide-in-from-bottom duration-200">
+            {/* Drawer Header */}
+            <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
+              <div className="flex items-center gap-2">
+                <SlidersHorizontal className="h-4 w-4 text-emerald-400" />
+                <h2 className="text-sm font-bold uppercase tracking-wider text-white">
+                  Filter anpassen
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMobileFilterOpen(false)}
+                className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+                aria-label="Filter schließen"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Drawer Scrollable Body */}
+            <div className="space-y-4 overflow-y-auto p-5 pb-6">
+              {/* 1. Stadt */}
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  Stadt / Kommune
+                </label>
+                <select
+                  value={city}
+                  onChange={(e) => {
+                    setCity(e.target.value);
+                    setDistrict('all');
+                    setPage(1);
+                  }}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm font-medium text-white focus:border-emerald-500 focus:outline-none"
+                >
+                  {cities.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 2. Stadtteile Multi-Select */}
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  Stadtteile in {city}
+                </label>
+                <DistrictMultiSelect
+                  city={city}
+                  options={districtOptions}
+                  selectedDistricts={selectedDistrictsList}
+                  onChange={handleDistrictChange}
+                />
+              </div>
+
+              {/* 3. Leistungsart */}
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  Leistungsart
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setBenefitType('sgb2')}
+                    className={`rounded-xl border p-2.5 text-left text-xs font-semibold transition ${
+                      benefitType === 'sgb2'
+                        ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/40'
+                        : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="font-bold">Bürgergeld</div>
+                    <div className="text-[10px] font-normal text-slate-500">SGB II · Jobcenter</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBenefitType('sgb12')}
+                    className={`rounded-xl border p-2.5 text-left text-xs font-semibold transition ${
+                      benefitType === 'sgb12'
+                        ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/40'
+                        : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="font-bold">Grundsicherung</div>
+                    <div className="text-[10px] font-normal text-slate-500">SGB XII · Sozialamt</div>
+                  </button>
+                </div>
+              </div>
+
+              {/* 4. Bedarfsgemeinschaft (1–6+) */}
+              <div>
+                <label className="mb-1.5 flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  <span className="flex items-center gap-1.5">
+                    <Users className="h-3.5 w-3.5 text-emerald-400" />
+                    Personen im Haushalt
+                  </span>
+                  <span className="text-emerald-300 font-bold">{bgSize} {bgSize === 1 ? 'Person' : 'Personen'}</span>
+                </label>
+                <div className="grid grid-cols-6 gap-1">
+                  {[1, 2, 3, 4, 5, 6].map((num) => (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => {
+                        setBgSize(num);
+                        setPage(1);
+                      }}
+                      className={`h-10 rounded-lg border text-xs font-bold transition ${
+                        bgSize === num
+                          ? 'border-emerald-500 bg-emerald-500 text-slate-950 shadow-sm shadow-emerald-500/30'
+                          : 'border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      {num === 6 && bgSize > 6 ? `${bgSize}` : num === 6 ? '6+' : num}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-1.5 flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1 text-xs text-slate-400">
+                  <span>Größere BG anpassen:</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBgSize((prev) => Math.max(1, prev - 1));
+                        setPage(1);
+                      }}
+                      aria-label="Person weniger"
+                      className="rounded p-1 hover:bg-slate-800 hover:text-white"
+                    >
+                      <Minus className="h-3.5 w-3.5" />
+                    </button>
+                    <span className="min-w-[20px] text-center font-bold text-white">{bgSize}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBgSize((prev) => Math.min(12, prev + 1));
+                        setPage(1);
+                      }}
+                      aria-label="Weitere Person"
+                      className="rounded p-1 hover:bg-slate-800 hover:text-white"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* 5. Toggles */}
+              <div className="space-y-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPrivateOnly((v) => !v);
+                    setPage(1);
+                  }}
+                  className={`flex w-full items-center justify-between rounded-xl border p-3 text-left transition ${
+                    privateOnly
+                      ? 'border-amber-500/50 bg-amber-500/10 text-amber-200'
+                      : 'border-slate-800 bg-slate-950/60 text-slate-300 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <ShieldCheck
+                      className={`h-4 w-4 shrink-0 ${
+                        privateOnly ? 'text-amber-400' : 'text-slate-500'
+                      }`}
+                    />
+                    <div>
+                      <div className="text-xs font-bold">Nur private Vermieter</div>
+                      <div className="text-[11px] text-slate-400">
+                        Schließt Vonovia, LEG &amp; Großkonzerne aus
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    className={`h-5 w-9 shrink-0 rounded-full p-0.5 transition ${
+                      privateOnly ? 'bg-amber-400' : 'bg-slate-700'
+                    }`}
+                  >
+                    <div
+                      className={`h-4 w-4 rounded-full bg-slate-950 transition-transform ${
+                        privateOnly ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIncludeTolerance((v) => !v);
+                    setPage(1);
+                  }}
+                  className={`flex w-full items-center justify-between rounded-xl border p-3 text-left transition ${
+                    includeTolerance
+                      ? 'border-sky-500/50 bg-sky-500/10 text-sky-200'
+                      : 'border-slate-800 bg-slate-950/60 text-slate-300 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Sparkles
+                      className={`h-4 w-4 shrink-0 ${
+                        includeTolerance ? 'text-sky-400' : 'text-slate-500'
+                      }`}
+                    />
+                    <div>
+                      <div className="text-xs font-bold">+10 % Toleranz (Eigenanteil)</div>
+                      <div className="text-[11px] text-slate-400">
+                        Zeigt Angebote bis zu 10 % über KdU
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    className={`h-5 w-9 shrink-0 rounded-full p-0.5 transition ${
+                      includeTolerance ? 'bg-sky-400' : 'bg-slate-700'
+                    }`}
+                  >
+                    <div
+                      className={`h-4 w-4 rounded-full bg-white transition-transform ${
+                        includeTolerance ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </div>
+                </button>
+              </div>
+
+              {/* 6. KdU-Limit Box */}
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-3 text-xs text-emerald-100">
+                <div className="flex items-center gap-1.5 font-bold text-emerald-300">
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                  <span>KdU-Limit ({city}, {bgSize} {bgSize === 1 ? 'Pers.' : 'Pers.'}):</span>
+                </div>
+                <div className="mt-1 flex items-baseline justify-between">
+                  <span className="text-slate-400">Max. Wohnfläche:</span>
+                  <span className="font-semibold text-white">{activeRule.max_sqm} m²</span>
+                </div>
+                <div className="mt-0.5 flex items-baseline justify-between">
+                  <span className="text-slate-400">Bruttokaltmiete:</span>
+                  <span className="font-bold text-emerald-300 text-sm">
+                    {formatEur(activeRule.max_bruttokalt_eur)}
+                  </span>
+                </div>
+                {includeTolerance && data?.tolerance_limit_eur && (
+                  <div className="mt-0.5 flex items-baseline justify-between text-[11px] text-sky-300">
+                    <span>Mit +10 % Toleranz:</span>
+                    <span className="font-semibold">{formatEur(data.tolerance_limit_eur)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Drawer Sticky Footer Action Button */}
+            <div className="border-t border-slate-800 bg-slate-900/95 p-4 backdrop-blur-sm">
+              <button
+                type="button"
+                onClick={() => setMobileFilterOpen(false)}
+                className="w-full min-h-[44px] rounded-xl bg-emerald-500 py-3 text-sm font-bold text-slate-950 shadow-lg shadow-emerald-500/20 transition active:scale-[0.98]"
+              >
+                {data ? `${data.total} passende Wohnungen anzeigen` : 'Treffer anzeigen'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Fixed Bottom Navigation Bar (< 1024px) */}
+      <nav className="fixed inset-x-0 bottom-0 z-40 flex h-16 items-center justify-around border-t border-slate-800/90 bg-slate-950/95 px-2 backdrop-blur-lg lg:hidden">
+        <button
+          type="button"
+          onClick={() => {
+            setActiveView('search');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+          className={`flex min-h-[44px] flex-1 flex-col items-center justify-center py-1 text-center transition ${
+            activeView === 'search' ? 'text-emerald-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Home className="h-5 w-5" />
+          <span className="mt-0.5 text-[10px] tracking-tight">Wohnungssuche</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (!user) {
+              setAuthModalMode('login');
+              setAuthModalOpen(true);
+            } else {
+              setActiveView('account');
+            }
+          }}
+          className={`relative flex min-h-[44px] flex-1 flex-col items-center justify-center py-1 text-center transition ${
+            activeView === 'account' ? 'text-emerald-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <FileText className="h-5 w-5" />
+          <span className="mt-0.5 text-[10px] tracking-tight">Mein Bereich</span>
+          {user && applications.length > 0 && (
+            <span className="absolute top-1 right-[20%] inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-emerald-500 px-1 text-[10px] font-bold text-slate-950">
+              {applications.length}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (!user) {
+              setAuthModalMode('login');
+              setAuthModalOpen(true);
+            } else {
+              setActiveView('account');
+              setOpenInboxSignal((n) => n + 1);
+            }
+          }}
+          className="relative flex min-h-[44px] flex-1 flex-col items-center justify-center py-1 text-center text-slate-400 transition hover:text-slate-200"
+        >
+          <Bell className="h-5 w-5" />
+          <span className="mt-0.5 text-[10px] tracking-tight">Inbox</span>
+          {unreadNotificationsCount > 0 && (
+            <span className="absolute top-1 right-[20%] inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white animate-pulse">
+              {unreadNotificationsCount}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (!user) {
+              setAuthModalMode('login');
+              setAuthModalOpen(true);
+            } else {
+              setActiveView('account');
+            }
+          }}
+          className={`flex min-h-[44px] flex-1 flex-col items-center justify-center py-1 text-center transition ${
+            user && activeView === 'account' ? 'text-emerald-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <User className="h-5 w-5" />
+          <span className="mt-0.5 text-[10px] tracking-tight">{user ? 'Profil' : 'Anmelden'}</span>
+        </button>
+      </nav>
     </div>
   );
 }

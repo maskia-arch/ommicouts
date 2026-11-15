@@ -29,6 +29,7 @@ build/
 out/
 
 # Logs & OS Files
+*.tsbuildinfo
 *.log
 npm-debug.log*
 .DS_Store

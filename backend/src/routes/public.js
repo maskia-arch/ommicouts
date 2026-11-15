@@ -46,7 +46,7 @@ router.get('/listings', optionalUserAuth, async (req, res) => {
     const privateOnly = req.query.private_only === 'true' || req.query.private_only === '1';
     const includeTolerance =
       req.query.include_tolerance === 'true' || req.query.include_tolerance === '1';
-    const district = String(req.query.district || '').trim();
+    const districtRaw = String(req.query.district || '').trim();
     const wbs = String(req.query.wbs || 'all').trim(); // 'all' | 'without' | 'only'
     const search = String(req.query.search || '').trim();
     const sort = String(req.query.sort || 'newest').trim();
@@ -80,10 +80,20 @@ router.get('/listings', optionalUserAuth, async (req, res) => {
       where.push(`is_private_landlord = TRUE`);
     }
 
-    if (district && district.toLowerCase() !== 'all') {
-      idx++;
-      where.push(`LOWER(district) = LOWER($${idx})`);
-      params.push(district);
+    if (districtRaw && districtRaw.toLowerCase() !== 'all') {
+      const selectedDistricts = districtRaw
+        .split(',')
+        .map((d) => d.trim().toLowerCase())
+        .filter(Boolean);
+      if (selectedDistricts.length === 1) {
+        idx++;
+        where.push(`LOWER(district) = LOWER($${idx})`);
+        params.push(selectedDistricts[0]);
+      } else if (selectedDistricts.length > 1) {
+        idx++;
+        where.push(`LOWER(district) = ANY($${idx}::text[])`);
+        params.push(selectedDistricts);
+      }
     }
 
     if (wbs === 'without') {
