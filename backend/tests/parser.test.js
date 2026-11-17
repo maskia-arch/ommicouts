@@ -214,3 +214,30 @@ test('parseListingDetail parses ggw-gelsenkirchen.de and subtracts included heat
   assert.equal(parsed.wbs_required, false);
   assert.equal(parsed.is_private_landlord, false);
 });
+
+test('parseListingDetail parses immowelt.de with separate Nebenkosten, Kaltmiete, and Kaution', () => {
+  const html = `
+    <html><body>
+      <main>
+        <h1>Hübsche 2 RW mit Einbauküche</h1>
+        <p>Auf dem Bettau 7, Bulmke-Hüllen, Gelsenkirchen (45888)</p>
+        <div>
+          <span>Kaltmiete</span><div>400 €</div>
+          <span>Nebenkosten</span><div>125 €</div>
+          <span>Heizkosten</span><div>nicht in Nebenkosten enthalten</div>
+          <span>Kaution</span><div>1.000 €</div>
+        </div>
+        <div>2 Zimmer • 50 m² • Geschoss 3/3</div>
+      </main>
+    </body></html>
+  `;
+  const parsed = parseListingDetail(html, 'https://www.immowelt.de/expose/b1a9a92c-a496-4d31-8d18-c47e80be7db6', 'immowelt');
+  assert.equal(parsed.external_id, 'iw_b1a9a92c-a496-4d31-8d18-c47e80be7db6');
+  assert.equal(parsed.zipcode, '45888');
+  assert.equal(parsed.district, 'Bulmke-Hüllen');
+  assert.equal(parsed.cold_rent, 400);
+  assert.equal(parsed.additional_costs, 125);
+  assert.equal(parsed.heating_costs, 0);
+  assert.equal(parsed.sqm, 50);
+  assert.equal(parsed.rooms, 2);
+});

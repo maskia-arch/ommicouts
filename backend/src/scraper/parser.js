@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import * as cheerio from 'cheerio';
+import LZString from 'lz-string';
 
 export const GELSENKIRCHEN_ZIP_DISTRICTS = {
   '45879': ['Altstadt', 'Neustadt'],
@@ -356,7 +357,7 @@ function spacedText($, rootEl) {
   return tokens.join(' ').replace(/\s+/g, ' ').trim();
 }
 
-function parseImmoweltSerpCard($, cardEl, absUrl, defaultCity) {
+export function parseImmoweltSerpCard($, cardEl, absUrl, defaultCity, classifiedData = null) {
   const cardText = spacedText($, cardEl);
   const externalId = extractExternalId(absUrl, 'immowelt');
 
@@ -364,23 +365,54 @@ function parseImmoweltSerpCard($, cardEl, absUrl, defaultCity) {
   const cleanedText = cardText.replace(/^\s*\d+\s*\/\s*\d+\s+/, ' ');
 
   let coldRent = null;
-  const priceMatch =
-    cleanedText.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*€\s*(?:Kaltmiete)?/i);
-  if (priceMatch) coldRent = parseGermanNumber(priceMatch[1]);
+  let warmRent = null;
+  let additionalCosts = null;
+  let heatingCosts = 0;
 
-  let rooms = null;
-  const roomMatch = cleanedText.match(/(\d{1,2}(?:[.,]\d)?)\s*Zimmer/i);
-  if (roomMatch) rooms = parseGermanNumber(roomMatch[1]);
+  if (classifiedData) {
+    const prices = classifiedData.hardFacts?.prices || [];
+    for (const pr of prices) {
+      const lbl = pr.label?.toLowerCase() || '';
+      const num = parseGermanNumber(pr.amount || pr.value);
+      if (lbl.includes('warm')) warmRent = num;
+      if (lbl.includes('kalt')) coldRent = num;
+      if (lbl.includes('neben') || lbl.includes('betrieb')) additionalCosts = num;
+    }
+    if (coldRent === null && classifiedData.tracking?.price) {
+      coldRent = Number(classifiedData.tracking.price);
+    }
+    if (warmRent === null && classifiedData.rawData?.price) {
+      warmRent = Number(classifiedData.rawData.price);
+    }
+    if (additionalCosts === null && warmRent !== null && coldRent !== null && warmRent > coldRent) {
+      additionalCosts = Math.round((warmRent - coldRent) * 100) / 100;
+    }
+  }
 
-  let sqm = null;
-  const sqmMatch = cleanedText.match(/(\d{1,4}(?:[.,]\d{1,2})?)\s*m²/i);
-  if (sqmMatch) sqm = parseGermanNumber(sqmMatch[1]);
+  if (coldRent === null) {
+    const priceMatch =
+      cleanedText.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*€\s*(?:Kaltmiete)?/i);
+    if (priceMatch) coldRent = parseGermanNumber(priceMatch[1]);
+  }
 
-  const zipcode = detectZipcode(cleanedText);
-  const district = detectDistrict(cleanedText, defaultCity);
+  let rooms = classifiedData?.rawData?.nbroom || null;
+  if (!rooms) {
+    const roomMatch = cleanedText.match(/(\d{1,2}(?:[.,]\d)?)\s*Zimmer/i);
+    if (roomMatch) rooms = parseGermanNumber(roomMatch[1]);
+  }
 
-  // Extract headline / title from card link or heading, falling back to concise description
+  let sqm = classifiedData?.rawData?.surface?.main || null;
+  if (!sqm) {
+    const sqmMatch = cleanedText.match(/(\d{1,4}(?:[.,]\d{1,2})?)\s*m²/i);
+    if (sqmMatch) sqm = parseGermanNumber(sqmMatch[1]);
+  }
+
+  const zipcode = classifiedData?.location?.address?.zipCode || detectZipcode(cleanedText);
+  const district = classifiedData?.location?.address?.district || detectDistrict(cleanedText, defaultCity);
+
   let title =
+    classifiedData?.mainDescription?.headline ||
+    classifiedData?.hardFacts?.title ||
     $(cardEl).find('[data-testid*="title"], h2, h3').first().text().replace(/\s+/g, ' ').trim() ||
     $(cardEl).find('a[href*="/expose/"]').attr('title')?.trim() ||
     '';
@@ -397,7 +429,7 @@ function parseImmoweltSerpCard($, cardEl, absUrl, defaultCity) {
   const providerPrefix = cardText.split(/\d+\s*\/\s*\d+/)[0]?.trim() || '';
 
   const sellerCandidates = [agencyImgAlt, agencyText, providerPrefix].filter(Boolean).join(' ');
-  const isPrivateLandlord = detectPrivateLandlord({
+  const isPrivateLandlord = classifiedData?.provider?.isPrivateOwner === true ? true : detectPrivateLandlord({
     sellerName: agencyImgAlt || agencyText || providerPrefix,
     fullText: `${sellerCandidates} ${cleanedText}`,
     portal: 'immowelt',
@@ -416,14 +448,14 @@ function parseImmoweltSerpCard($, cardEl, absUrl, defaultCity) {
     zipcode,
     locality_raw: locSnippetMatch ? locSnippetMatch[0] : cleanedText.slice(0, 200),
     cold_rent: coldRent,
-    additional_costs: 0,
-    heating_costs: 0,
+    additional_costs: additionalCosts,
+    heating_costs: heatingCosts,
     sqm,
     rooms,
     is_private_landlord: isPrivateLandlord,
     wbs_required: wbsRequired,
     is_wanted: false,
-    description_snippet: cleanedText.slice(0, 500),
+    description_snippet: (classifiedData?.mainDescription?.description || cleanedText).slice(0, 500),
   };
 }
 
@@ -672,6 +704,28 @@ export function extractSearchListingLinks(html, baseUrl, portal, defaultCity = '
   }
 
   if (portal === 'immowelt') {
+    let serpDataMap = new Map();
+    try {
+      const idx = html.indexOf('window["__UFRN_FETCHER__"]=JSON.parse(');
+      if (idx !== -1) {
+        const end = html.indexOf(');</script>', idx);
+        const rawStr = html.slice(idx + 'window["__UFRN_FETCHER__"]=JSON.parse('.length, end);
+        const parsed = JSON.parse(JSON.parse(rawStr));
+        const compressed = parsed.data?.['classified-serp-init-data'];
+        if (compressed) {
+          const decompressed = LZString.decompressFromBase64(compressed);
+          const root = JSON.parse(decompressed);
+          const items = Object.values(root.pageProps?.classifiedsData || {});
+          for (const it of items) {
+            if (it.id) serpDataMap.set(it.id.toLowerCase(), it);
+            if (it.metadata?.legacyId) serpDataMap.set(it.metadata.legacyId.toLowerCase(), it);
+          }
+        }
+      }
+    } catch {
+      // Fallback cleanly to standard DOM parsing
+    }
+
     const cards = $('[data-testid="serp-core-classified-card-testid"]');
     if (cards.length > 0) {
       cards.each((_, el) => {
@@ -683,7 +737,11 @@ export function extractSearchListingLinks(html, baseUrl, portal, defaultCity = '
         } catch {
           return;
         }
-        const serpParsed = parseImmoweltSerpCard($, el, absUrl, defaultCity);
+        const m = absUrl.match(/\/expose\/([a-zA-Z0-9_-]+)/i);
+        const cardId = m ? m[1].toLowerCase() : null;
+        const classifiedData = cardId ? serpDataMap.get(cardId) : null;
+
+        const serpParsed = parseImmoweltSerpCard($, el, absUrl, defaultCity, classifiedData);
         pushCandidate(absUrl, { title: serpParsed.title, serpParsed });
       });
       return found;
@@ -1412,6 +1470,117 @@ export function parseListingDetail(html, url, portal = null, defaultCity = 'Gels
     }
 
     descriptionText = mainText.slice(0, 5000);
+  } else if (cleanUrl.includes('immowelt.de') || resolvedPortal === 'immowelt') {
+    title =
+      $('h1').first().text().replace(/\s+/g, ' ').trim() ||
+      $('meta[property="og:title"]').attr('content')?.trim() ||
+      '';
+
+    let warmRent = null;
+    let heatingInWarm = false;
+    let heatingSeparate = false;
+
+    $('span, div, p, dt, th').each((_, el) => {
+      const label = $(el).text().trim();
+
+      if (/^Nebenkosten$/i.test(label) && additionalCosts === null) {
+        const sib = $(el).next().text().trim() || $(el).parent().next().text().trim();
+        const num = parseGermanNumber(sib);
+        if (num !== null) additionalCosts = num;
+        else {
+          const gp = $(el).parent().parent().text().replace(/\s+/g, ' ');
+          const m = gp.match(/Nebenkosten\s*([\d.,]+)\s*€/i);
+          if (m) additionalCosts = parseGermanNumber(m[1]);
+        }
+      }
+
+      if (/^Heizkosten$/i.test(label) && heatingCosts === null) {
+        const sib =
+          $(el).next().text().trim() ||
+          $(el).parent().next().text().trim() ||
+          $(el).parent().parent().text().replace(/\s+/g, ' ');
+        if (/in Warmmiete enthalten/i.test(sib)) {
+          heatingInWarm = true;
+          heatingCosts = 0;
+        } else if (/nicht in Nebenkosten enthalten|separat/i.test(sib)) {
+          heatingSeparate = true;
+          heatingCosts = 0;
+        } else {
+          const num = parseGermanNumber(sib);
+          if (num !== null) heatingCosts = num;
+        }
+      }
+
+      if (/^Kaltmiete$/i.test(label) && coldRent === null) {
+        const sib = $(el).prev().text().trim() || $(el).parent().text().replace(/\s+/g, ' ');
+        const m =
+          sib.match(/([\d.,]+)\s*€\s*Kaltmiete/i) ||
+          sib.match(/Kaltmiete\s*(?:(?:\d+[.,]\d+\s*€\/m²\s*)?)([\d.,]+)\s*€/i);
+        if (m) {
+          const num = parseGermanNumber(m[1]);
+          if (num && num >= 150) coldRent = num;
+        }
+      }
+
+      if (/^Warmmiete(?:\s*ca\.)?$/i.test(label) && warmRent === null) {
+        const sib =
+          $(el).prev().text().trim() ||
+          $(el).parent().next().text().trim() ||
+          $(el).parent().text().replace(/\s+/g, ' ');
+        const m =
+          sib.match(/([\d.,]+)\s*€\s*Warmmiete/i) ||
+          sib.match(/Warmmiete(?:\s*ca\.)?\s*~?([\d.,]+)\s*€/i);
+        if (m) warmRent = parseGermanNumber(m[1]);
+      }
+    });
+
+    const bodyText = $('body').text().replace(/\s+/g, ' ');
+
+    if (coldRent === null) {
+      const m =
+        bodyText.match(/([\d.,]+)\s*€\s*Kaltmiete/i) ||
+        bodyText.match(/Kaltmiete\s+(?:(?:\d+\s*€\/m²\s+)?)([\d.,]+)\s*€/i);
+      if (m) {
+        const num = parseGermanNumber(m[1]);
+        if (num && num >= 150) coldRent = num;
+      }
+    }
+
+    if (additionalCosts === null) {
+      const m = bodyText.match(/Nebenkosten\s*([\d.,]+)\s*€/i);
+      if (m) additionalCosts = parseGermanNumber(m[1]);
+      else if (warmRent !== null && coldRent !== null && warmRent > coldRent) {
+        additionalCosts = Math.round((warmRent - coldRent) * 100) / 100;
+      }
+    }
+
+    if (heatingCosts === null && !heatingInWarm && !heatingSeparate) {
+      if (/Heizkosten\s*in Warmmiete enthalten/i.test(bodyText)) {
+        heatingCosts = 0;
+      } else if (/Heizkosten\s*(?:nicht in Nebenkosten enthalten|separat)/i.test(bodyText)) {
+        heatingCosts = 0;
+      } else {
+        const m = bodyText.match(/Heizkosten\s*([\d.,]+)\s*€/i);
+        if (m) heatingCosts = parseGermanNumber(m[1]);
+      }
+    }
+
+    const locMatch =
+      bodyText.match(/\b(458\d{2})\s+Gelsenkirchen/i) ||
+      bodyText.match(/\b(\d{5})\s+([A-Za-zÄÖÜäöüß\-]+)/);
+    if (locMatch) {
+      localityRaw = locMatch[0];
+      zipcode = locMatch[1];
+      district = detectDistrict(locMatch[0], defaultCity, zipcode);
+    }
+
+    const rMatch = bodyText.match(/(\d{1,2}(?:[.,]\d)?)\s*Zimmer\b/i);
+    if (rMatch && rooms === null) rooms = parseGermanNumber(rMatch[1]);
+
+    const sMatch = bodyText.match(/(\d{1,4}(?:[.,]\d{1,2})?)\s*m²/i);
+    if (sMatch && sqm === null) sqm = parseGermanNumber(sMatch[1]);
+
+    descriptionText = bodyText.slice(0, 5000);
   }
 
   // 2. Valid Listing JSON-LD extraction (ignores WebSite / BreadcrumbList / ImageObject)

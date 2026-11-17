@@ -534,13 +534,16 @@ export async function runDeltaPoll({ configId = null } = {}) {
 
             if (candidate.serpParsed && isAushang) {
               parsed = candidate.serpParsed;
-            } else if (candidate.serpParsed && candidate.url.includes('immowelt.de')) {
-              // Immowelt expose pages block datacenter/VPS IPs with HTTP 403 (DataDome).
-              // The SERP card already provides verified price, m², rooms, title, and district.
-              // We use candidate.serpParsed directly to prevent 403 blocks and speed up delta polls.
+            } else if (
+              candidate.serpParsed &&
+              candidate.url.includes('immowelt.de') &&
+              candidate.serpParsed.additional_costs !== null &&
+              candidate.serpParsed.additional_costs !== undefined
+            ) {
+              // Immowelt SERP data already extracted verified coldRent, warmRent & additionalCosts from __UFRN_FETCHER__!
               parsed = candidate.serpParsed;
             } else {
-              // If SERP card already parsed everything (e.g. Immowelt), try detail page for NK/exact text,
+              // If SERP card already parsed everything, try detail page for NK/exact text,
               // and fall back cleanly to SERP card if detail page is blocked (403/429).
               await sleepJitter(cfg.jitter_min_ms, cfg.jitter_max_ms);
 
@@ -558,6 +561,9 @@ export async function runDeltaPoll({ configId = null } = {}) {
                   candidate.portal || cfg.portal
                 );
                 if (offlineCheck.offline) {
+                  try {
+                    await pool.query('DELETE FROM listings WHERE external_id = $1', [candidate.externalId]);
+                  } catch {}
                   continue;
                 }
 
@@ -577,6 +583,10 @@ export async function runDeltaPoll({ configId = null } = {}) {
                   );
                   if (!parsed.title && candidate.quickTitle) {
                     parsed.title = candidate.quickTitle;
+                  }
+                  // If detail page lacked Nebenkosten, fall back to SERP parsed utilities if available
+                  if ((parsed.additional_costs === null || parsed.additional_costs === undefined) && candidate.serpParsed?.additional_costs) {
+                    parsed.additional_costs = candidate.serpParsed.additional_costs;
                   }
                 }
               } catch (detailErr) {
