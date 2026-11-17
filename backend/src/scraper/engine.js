@@ -20,6 +20,7 @@ import {
   parseWohnungsaushangTable,
 } from './parser.js';
 import { validateListing } from './validator.js';
+import { resolveMietsofortLead } from '../services/leadResolver.js';
 
 const runtimeLocks = {
   deltaPollRunning: false,
@@ -513,7 +514,25 @@ export async function runDeltaPoll({ configId = null } = {}) {
             consecutiveKnown = 0;
             let parsed = null;
 
-            if (candidate.serpParsed && (isAushang || isMietsofort)) {
+            if (isMietsofort) {
+              // mietsofort.de is ONLY an early-warning Lead Trigger, NEVER a direct listing!
+              // Resolve through 2-stage Lead Resolver:
+              const resolveResult = await resolveMietsofortLead(
+                candidate.serpParsed,
+                targetCity,
+                rules,
+                { zipPrefixes, proxyUrl: cfg.proxy_url }
+              );
+
+              if (resolveResult.resolved && resolveResult.originalListing) {
+                newCount++;
+              } else {
+                skippedCount++;
+              }
+              continue;
+            }
+
+            if (candidate.serpParsed && isAushang) {
               parsed = candidate.serpParsed;
             } else {
               // If SERP card already parsed everything (e.g. Immowelt), try detail page for NK/exact text,
@@ -689,38 +708,9 @@ export async function runReconciler({ batchLimit = 60 } = {}) {
         continue;
       }
 
-      if (item.external_id && item.external_id.startsWith('ms_')) {
-        const rawId = item.external_id.replace(/^ms_/, '');
-        try {
-          const checkRes = await fetchStealthHtml('https://api.mietsofort.de/rest/v1/rpc/site_listing', {
-            extraHeaders: {
-              apikey: MIETSOFORT_ANON_KEY,
-              Authorization: `Bearer ${MIETSOFORT_ANON_KEY}`,
-              'Content-Type': 'application/json',
-            },
-            json: { p_param: rawId },
-          });
-          const listingData =
-            checkRes.statusCode < 400 && typeof checkRes.html === 'string'
-              ? JSON.parse(checkRes.html)
-              : checkRes.html;
-          const isOffline = !listingData || !listingData.id;
-          if (isOffline) {
-            const { rows: offRows } = await pool.query(
-              `UPDATE listings SET status = 'offline', last_seen_at = NOW() WHERE id = $1 RETURNING *`,
-              [item.id]
-            );
-            if (offRows[0]) {
-              await notifyWatchersListingChanged({ before: item, after: offRows[0] });
-            }
-            offlineCount++;
-          } else {
-            await pool.query(`UPDATE listings SET last_seen_at = NOW() WHERE id = $1`, [item.id]);
-            updatedCount++;
-          }
-        } catch {
-          // keep existing on temporary network issue
-        }
+      if (item.external_id && (item.external_id.startsWith('ms_') || String(item.url || '').includes('mietsofort.de'))) {
+        await pool.query(`DELETE FROM listings WHERE id = $1`, [item.id]);
+        offlineCount++;
         continue;
       }
 

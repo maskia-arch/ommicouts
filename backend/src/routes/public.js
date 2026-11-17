@@ -239,7 +239,14 @@ router.get('/listings', optionalUserAuth, async (req, res) => {
     const toleranceLimit = round2(strictLimit * 1.1);
     const maxBruttokaltFilter = includeTolerance ? toleranceLimit : strictLimit;
 
-    const where = [`status = 'active'`, `LOWER(city) = LOWER($1)`, `calculated_bruttokalt IS NOT NULL`, `calculated_bruttokalt <= $2`];
+    const where = [
+      `status = 'active'`,
+      `LOWER(city) = LOWER($1)`,
+      `calculated_bruttokalt IS NOT NULL`,
+      `calculated_bruttokalt <= $2`,
+      `url NOT LIKE '%mietsofort.de%'`,
+      `external_id NOT LIKE 'ms_%'`,
+    ];
     const params = [city, maxBruttokaltFilter];
     let idx = params.length;
 

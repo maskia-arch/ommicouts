@@ -85,6 +85,16 @@ export function validateListing(
     return { valid: false, reason: 'Leeres Listing-Objekt' };
   }
 
+  // 0. Hard Block für mietsofort.de (Paywall-Falle 79 € & unvollständige Daten)
+  const lowerUrl = String(parsed.url || '').toLowerCase();
+  const lowerExt = String(parsed.external_id || '').toLowerCase();
+  if (lowerUrl.includes('mietsofort.de') || lowerExt.startsWith('ms_')) {
+    return {
+      valid: false,
+      reason: 'mietsofort.de ist als direkte Quelle gesperrt (Paywall-Falle 79 € / unvollständige Daten)',
+    };
+  }
+
   // 1. Anti-Gesuche-Filter
   if (parsed.is_wanted) {
     return { valid: false, reason: 'Inseratstyp ist Gesuch (WANTED)' };

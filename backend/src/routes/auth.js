@@ -293,6 +293,8 @@ router.get('/me/applications', requireUserAuth, async (req, res) => {
        FROM user_applications ua
        JOIN listings l ON l.id = ua.listing_id
        WHERE ua.user_id = $1
+         AND l.url NOT LIKE '%mietsofort.de%'
+         AND l.external_id NOT LIKE 'ms_%'
        ORDER BY ua.updated_at DESC`,
       [req.user.id]
     );

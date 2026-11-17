@@ -481,6 +481,27 @@ CREATE TABLE IF NOT EXISTS user_notifications (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_notifications_user_unread ON user_notifications (user_id, is_read, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS mietsofort_leads (
+    id SERIAL PRIMARY KEY,
+    lead_id VARCHAR(100) UNIQUE NOT NULL,
+    title TEXT,
+    cold_rent NUMERIC(10,2),
+    sqm NUMERIC(10,2),
+    rooms NUMERIC(5,1),
+    district VARCHAR(100),
+    zipcode VARCHAR(20),
+    locality_raw TEXT,
+    status VARCHAR(50) NOT NULL,
+    original_url TEXT,
+    original_listing_id UUID REFERENCES listings(id) ON DELETE SET NULL,
+    notes TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_mietsofort_leads_status ON mietsofort_leads (status);
+CREATE INDEX IF NOT EXISTS idx_mietsofort_leads_created_at ON mietsofort_leads (created_at DESC);
 `;
 
 export async function cleanupInvalidListings() {
@@ -496,6 +517,8 @@ export async function cleanupInvalidListings() {
        OR LOWER(title) IN ('kleinanzeigen', 'immowelt')
        OR title ~* '\\m(suche|suchen|gesucht|wohnungssuche|suchend|tausche|wohnungstausch|wg-zimmer|monteurzimmer|stellplatz|garage|gewerbe|ladenlokal|demenz-?wg|pflege-?wg|senioren-?wg|pflegewohngemeinschaft)\\M'
        OR url ~* '(gesucht|wohnungssuche|suche-wohnung|wg-zimmer|stellplatz|garage|demenz-wg|pflege-wg|senioren-wg)'
+       OR url LIKE '%mietsofort.de%'
+       OR external_id LIKE 'ms_%'
   `);
 
   const { deduplicateActiveListings } = await import('./services/deduplicator.js');
@@ -542,6 +565,17 @@ export async function ensureDatabaseInitialized(retries = 10, delayMs = 2000) {
             finished_at = NOW(),
             error_message = COALESCE(error_message, 'Durch Server-Neustart unterbrochen')
         WHERE status = 'running' AND started_at < NOW() - INTERVAL '5 minutes'
+      `);
+
+      // Hard block cleanup: Purge any direct mietsofort.de entries from listings and suppress them
+      await pool.query(`
+        INSERT INTO suppressed_listings (external_id, reason)
+        SELECT external_id, 'mietsofort_paywall_blocked'
+        FROM listings
+        WHERE url LIKE '%mietsofort.de%' OR external_id LIKE 'ms_%'
+        ON CONFLICT (external_id) DO NOTHING;
+
+        DELETE FROM listings WHERE url LIKE '%mietsofort.de%' OR external_id LIKE 'ms_%';
       `);
 
       const cleanup = await cleanupInvalidListings();

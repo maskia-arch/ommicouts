@@ -1174,7 +1174,13 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            {(data?.items || []).map((item) => (
+                    {(data?.items || [])
+                      .filter(
+                        (item) =>
+                          !item.url?.includes('mietsofort.de') &&
+                          !item.external_id?.startsWith('ms_')
+                      )
+                      .map((item) => (
               <article
                 key={item.id}
                 className="flex h-full flex-col justify-between rounded-2xl border border-slate-800 bg-slate-900/80 p-4 transition hover:border-slate-700 sm:p-5"

@@ -229,6 +229,27 @@ CREATE TABLE IF NOT EXISTS scraper_logs (
 
 CREATE INDEX IF NOT EXISTS idx_scraper_logs_started_at ON scraper_logs (started_at DESC);
 
+CREATE TABLE IF NOT EXISTS mietsofort_leads (
+    id SERIAL PRIMARY KEY,
+    lead_id VARCHAR(100) UNIQUE NOT NULL,
+    title TEXT,
+    cold_rent NUMERIC(10,2),
+    sqm NUMERIC(10,2),
+    rooms NUMERIC(5,1),
+    district VARCHAR(100),
+    zipcode VARCHAR(20),
+    locality_raw TEXT,
+    status VARCHAR(50) NOT NULL,
+    original_url TEXT,
+    original_listing_id UUID REFERENCES listings(id) ON DELETE SET NULL,
+    notes TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_mietsofort_leads_status ON mietsofort_leads (status);
+CREATE INDEX IF NOT EXISTS idx_mietsofort_leads_created_at ON mietsofort_leads (created_at DESC);
+
 -- ------------------------------------------------------------------------------
 -- 5. Benutzerkonten & Bewerbungs-Tracker (Ausbaustufe 1)
 -- ------------------------------------------------------------------------------
