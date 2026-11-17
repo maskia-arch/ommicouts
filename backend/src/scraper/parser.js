@@ -143,20 +143,21 @@ export function normalizeListingUrl(rawUrl) {
 }
 
 export function extractExternalId(url, portal = null) {
-  const resolvedPortal = portal || detectPortal(url);
   const cleanUrl = normalizeListingUrl(url);
+  const detected = detectPortal(cleanUrl);
+  const resolvedPortal = portal && portal !== 'other' ? portal : detected;
 
   if (resolvedPortal === 'kleinanzeigen') {
     const match = cleanUrl.match(/\/(\d{6,14})(?:-[\d-]+)?(?:\?.*)?$/);
     if (match) return `ka_${match[1]}`;
   }
 
-  if (resolvedPortal === 'immowelt') {
+  if (resolvedPortal === 'immowelt' || cleanUrl.includes('immowelt.de')) {
     const match = cleanUrl.match(/\/expose\/([a-zA-Z0-9_-]+)/i);
     if (match) return `iw_${match[1]}`;
   }
 
-  if (resolvedPortal === 'immoscout') {
+  if (resolvedPortal === 'immoscout' || cleanUrl.includes('immobilienscout24.de')) {
     const match = cleanUrl.match(/\/expose\/(\d+)/i);
     if (match) return `is_${match[1]}`;
   }
@@ -179,6 +180,11 @@ export function extractExternalId(url, portal = null) {
   if (cleanUrl.includes('wohnungsaushang') || cleanUrl.includes('gelsenkirchen.de/de/infrastruktur/bauen_und_wohnen/wohnungsaushang')) {
     const match = cleanUrl.match(/#wohnung-([a-z0-9_-]+)/i) || cleanUrl.match(/([a-z0-9]{8,32})$/i);
     if (match) return `ge_aushang_${match[1]}`;
+  }
+
+  if (cleanUrl.includes('meinestadt.de')) {
+    const match = cleanUrl.match(/\/expose\/([a-zA-Z0-9_-]+)/i) || cleanUrl.match(/\/(\d{5,12})(?:\.html|\/|$)/);
+    if (match) return `mst_${match[1]}`;
   }
 
   if (cleanUrl.includes('mietsofort.de')) {
@@ -232,7 +238,11 @@ export function buildPagedSearchUrl(baseUrl, page, portal) {
       return u.toString();
     }
 
-    if (u.hostname.includes('ggw-gelsenkirchen.de') || u.pathname.includes('wohnungsaushang')) {
+    if (
+      u.hostname.includes('ggw-gelsenkirchen.de') ||
+      u.hostname.includes('meinestadt.de') ||
+      u.pathname.includes('wohnungsaushang')
+    ) {
       return baseUrl;
     }
 
@@ -417,6 +427,73 @@ function parseImmoweltSerpCard($, cardEl, absUrl, defaultCity) {
   };
 }
 
+export function parseMeinestadtSerpCard($, cardEl, absUrl, defaultCity = 'Gelsenkirchen') {
+  const cardText = spacedText($, cardEl);
+  const isImmowelt = absUrl.includes('immowelt.de');
+  const portal = isImmowelt ? 'immowelt' : 'other';
+  const externalId = extractExternalId(absUrl, portal);
+
+  let title =
+    $(cardEl).find('[data-component="MsHeadline"], h2, h3, h4').first().text().replace(/\s+/g, ' ').trim() ||
+    $(cardEl).find('img').attr('alt')?.trim() ||
+    '';
+
+  let coldRent = null;
+  const priceMatch = cardText.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*€\s*(?:Kaltmiete)?/i);
+  if (priceMatch) coldRent = parseGermanNumber(priceMatch[1]);
+
+  let sqm = null;
+  const sqmMatch = cardText.match(/(\d{1,4}(?:[.,]\d{1,2})?)\s*m²/i);
+  if (sqmMatch) sqm = parseGermanNumber(sqmMatch[1]);
+
+  let rooms = null;
+  const roomMatch = cardText.match(/(\d{1,2}(?:[.,]\d)?)\s*Zimmer/i);
+  if (roomMatch) rooms = parseGermanNumber(roomMatch[1]);
+
+  const zipcode = detectZipcode(cardText);
+  const district = detectDistrict(cardText, defaultCity, zipcode) || defaultCity;
+
+  let isPrivateLandlord = false;
+  if (cardText.includes('privates Angebot') || cardText.includes('Privatanbieter')) {
+    isPrivateLandlord = true;
+  } else if (cardText.includes('gewerbliches Angebot') || cardText.includes('Gewerblicher Anbieter')) {
+    isPrivateLandlord = false;
+  } else {
+    isPrivateLandlord = detectPrivateLandlord({
+      sellerName: '',
+      fullText: cardText,
+      portal,
+    });
+  }
+
+  const wbsRequired = detectWbsRequired(cardText);
+
+  if (!title) {
+    const locLabel = district && district !== defaultCity ? `${defaultCity}-${district}` : defaultCity;
+    title = `${rooms ? `${rooms}-Zimmer-Wohnung` : 'Mietwohnung'} in ${locLabel}${sqm ? ` (${sqm} m²)` : ''}`;
+  }
+
+  return {
+    external_id: externalId,
+    portal,
+    title: title.slice(0, 300),
+    url: absUrl,
+    city: defaultCity,
+    district,
+    zipcode,
+    locality_raw: cardText.slice(0, 200),
+    cold_rent: coldRent,
+    additional_costs: 0,
+    heating_costs: 0,
+    sqm,
+    rooms,
+    is_private_landlord: isPrivateLandlord,
+    wbs_required: wbsRequired,
+    is_wanted: false,
+    description_snippet: cardText.slice(0, 500),
+  };
+}
+
 export function parseWohnungsaushangTable($, baseUrl, defaultCity = 'Gelsenkirchen') {
   const candidates = [];
   const rows = $('table[id*="wohnungenGridView"] tr');
@@ -555,13 +632,16 @@ export function extractSearchListingLinks(html, baseUrl, portal, defaultCity = '
     if (portal === 'immowelt' && !absUrl.includes('/expose/')) return;
     if (portal === 'immoscout' && !absUrl.includes('/expose/')) return;
 
-    const externalId = extractExternalId(absUrl, portal);
+    const detectedPortal = detectPortal(absUrl);
+    const candidatePortal =
+      portal && portal !== 'other' ? portal : detectedPortal !== 'other' ? detectedPortal : portal;
+    const externalId = extractExternalId(absUrl, candidatePortal);
     if (seenIds.has(externalId)) return;
     seenIds.add(externalId);
     found.push({
       externalId,
       url: absUrl,
-      portal,
+      portal: candidatePortal,
       quickTitle: quickMeta.title ? String(quickMeta.title).trim() : null,
       serpParsed: quickMeta.serpParsed || null,
     });
@@ -636,17 +716,19 @@ export function extractSearchListingLinks(html, baseUrl, portal, defaultCity = '
   }
 
   if (String(baseUrl || '').includes('meinestadt.de')) {
-    $('a[href*="immowelt.de/expose/"]').each((_, el) => {
+    $('a[href*="/expose/"]').each((_, el) => {
       const href = $(el).attr('href') || '';
-      const cleanExpose = normalizeListingUrl(href.split('?')[0]);
-      if (/immowelt\.de\/expose\/[a-z0-9_-]+/i.test(cleanExpose)) {
-        pushCandidate(cleanExpose, { title: $(el).text().trim() });
+      let absUrl;
+      try {
+        absUrl = normalizeListingUrl(new URL(href, baseUrl).toString().split('?')[0]);
+      } catch {
+        return;
       }
+      if (!/\/expose\/[a-z0-9_-]+/i.test(absUrl)) return;
+
+      const serpParsed = parseMeinestadtSerpCard($, el, absUrl, defaultCity);
+      pushCandidate(absUrl, { title: serpParsed.title, serpParsed });
     });
-    const rawMatches = String(html || '').match(/https?:\/\/[^"'\s>]*immowelt\.de\/expose\/[a-z0-9_-]+/gi) || [];
-    for (const raw of rawMatches) {
-      pushCandidate(raw, {});
-    }
     return found;
   }
 
@@ -1262,6 +1344,74 @@ export function parseListingDetail(html, url, portal = null, defaultCity = 'Gels
 
     const descDom = $('.article-description').text().replace(/\s+/g, ' ').trim();
     if (descDom) descriptionText += ` ${descDom}`;
+  } else if (cleanUrl.includes('meinestadt.de')) {
+    title = $('h1').first().text().replace(/\s+/g, ' ').trim();
+    const mainText = $('main, article, body').first().text().replace(/\s+/g, ' ').trim();
+
+    const locMatch = mainText.match(/\b(458\d{2})\s+Gelsenkirchen/i) || mainText.match(/\b(\d{5})\s+([A-Za-zÄÖÜäöüß\-]+)/);
+    if (locMatch) {
+      localityRaw = locMatch[0];
+      zipcode = locMatch[1];
+      district = detectDistrict(locMatch[0], defaultCity, zipcode);
+    }
+
+    let totalNk = null;
+    let warmRent = null;
+    let hkIncludedInNk = false;
+
+    $('table tr').each((_, tr) => {
+      const rowText = $(tr).text().replace(/\s+/g, ' ').trim();
+      const lower = rowText.toLowerCase();
+
+      if (lower.startsWith('kaltmiete') && coldRent === null) {
+        coldRent = parseGermanNumber(rowText);
+      } else if (lower.startsWith('warmmiete') && warmRent === null) {
+        warmRent = parseGermanNumber(rowText);
+      } else if (lower.includes('heizkosten in nebenkosten enthalten')) {
+        hkIncludedInNk = lower.includes('ja');
+      } else if (lower.startsWith('nebenkosten') && totalNk === null) {
+        totalNk = parseGermanNumber(rowText);
+      } else if (lower.startsWith('heizkosten') && heatingCosts === null) {
+        heatingCosts = parseGermanNumber(rowText);
+      } else if (lower.startsWith('wohnfläche') && sqm === null) {
+        sqm = parseGermanNumber(rowText);
+      } else if ((lower.startsWith('zimmer') || lower.includes('schlafzimmer') || lower.includes('anzahl zimmer')) && rooms === null) {
+        rooms = parseGermanNumber(rowText);
+      }
+    });
+
+    if (rooms === null) {
+      const rMatch = mainText.match(/(\d{1,2}(?:[.,]\d)?)\s*Zimmer\b/i);
+      if (rMatch) rooms = parseGermanNumber(rMatch[1]);
+    }
+    if (sqm === null) {
+      const sMatch = mainText.match(/(\d{1,4}(?:[.,]\d{1,2})?)\s*m²\b/i);
+      if (sMatch) sqm = parseGermanNumber(sMatch[1]);
+    }
+
+    if (totalNk !== null) {
+      if (hkIncludedInNk && heatingCosts !== null && totalNk >= heatingCosts) {
+        additionalCosts = Math.round((totalNk - heatingCosts) * 100) / 100;
+      } else {
+        additionalCosts = totalNk;
+      }
+    } else if (warmRent !== null && coldRent !== null && warmRent >= coldRent) {
+      additionalCosts = Math.round((warmRent - coldRent) * 100) / 100;
+    }
+
+    if (mainText.includes('privates Angebot') || mainText.includes('Privatanbieter')) {
+      sellerTypeRaw = 'private';
+      sellerName = 'Privatanbieter';
+    } else if (mainText.includes('gewerbliches Angebot') || mainText.includes('Gewerblicher Anbieter')) {
+      sellerTypeRaw = 'commercial';
+      sellerName = 'Gewerblicher Anbieter';
+    }
+
+    if (wbsExplicit === null) {
+      wbsExplicit = detectWbsRequired(mainText);
+    }
+
+    descriptionText = mainText.slice(0, 5000);
   }
 
   // 2. Valid Listing JSON-LD extraction (ignores WebSite / BreadcrumbList / ImageObject)
@@ -1471,6 +1621,9 @@ export function isListingOfflineHtml(html, finalUrl, statusCode, portal) {
       (lowerUrl.includes('/vermietung-wohnungen/') && !lowerUrl.includes('/anzeige/')))
   ) {
     return { offline: true, reason: 'Redirect zur Quoka-Übersicht / 404' };
+  }
+  if (lowerUrl.includes('meinestadt.de') && !lowerUrl.includes('/expose/') && lowerUrl.includes('/immobilien/')) {
+    return { offline: true, reason: 'Redirect zur Meinestadt-Übersicht' };
   }
 
   const lowerHtml = String(html || '').toLowerCase();

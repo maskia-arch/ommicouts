@@ -9,6 +9,7 @@ import {
   extractSearchListingLinks,
   parseListingDetail,
   isListingOfflineHtml,
+  buildPagedSearchUrl,
 } from '../src/scraper/parser.js';
 import {
   generateOrgLicenseKey,
@@ -345,16 +346,83 @@ test('detectDistrict and resolveDistrictByZip map Gelsenkirchen ZIPs accurately 
 
 test('meinestadt.de and quoka.de extraction, detail parsing, and offline detection work cleanly', () => {
   const msHtml = `
-    <a href="https://www.immowelt.de/expose/26p6gd75fur9?utm_source=meinestadt&utm_medium=referral">Wohnung</a>
+    <a href="https://www.immowelt.de/expose/26p6gd75fur9?utm_source=meinestadt&utm_medium=referral">
+      <span data-component="MsHeadline">Urbanes Wohnen mit Altbaucharme</span>
+      <p>90 m²</p>
+      <p>3 Zimmer</p>
+      <span>650 € Kaltmiete</span>
+      <span>Gelsenkirchen</span>
+      <span>privates Angebot</span>
+    </a>
+    <a href="https://www.meinestadt.de/expose/29833630">
+      <span data-component="MsHeadline">Anspruchsvolles Wohnen</span>
+      <p>80 m²</p>
+      <p>2 Zimmer</p>
+      <span>816 € Kaltmiete</span>
+      <span>Gelsenkirchen-Altstadt</span>
+      <span>gewerbliches Angebot</span>
+    </a>
   `;
   const msLinks = extractSearchListingLinks(
     msHtml,
     'https://www.meinestadt.de/gelsenkirchen/immobilien/wohnungen',
     'other'
   );
-  assert.equal(msLinks.length, 1);
+  assert.equal(msLinks.length, 2);
   assert.equal(msLinks[0].url, 'https://www.immowelt.de/expose/26p6gd75fur9');
-  assert.equal(extractExternalId(msLinks[0].url), 'iw_26p6gd75fur9');
+  assert.equal(msLinks[0].portal, 'immowelt');
+  assert.equal(msLinks[0].externalId, 'iw_26p6gd75fur9');
+  assert.equal(msLinks[0].serpParsed.cold_rent, 650);
+  assert.equal(msLinks[0].serpParsed.sqm, 90);
+  assert.equal(msLinks[0].serpParsed.rooms, 3);
+  assert.equal(msLinks[0].serpParsed.is_private_landlord, true);
+
+  assert.equal(msLinks[1].url, 'https://www.meinestadt.de/expose/29833630');
+  assert.equal(msLinks[1].portal, 'other');
+  assert.equal(msLinks[1].externalId, 'mst_29833630');
+  assert.equal(msLinks[1].serpParsed.cold_rent, 816);
+  assert.equal(msLinks[1].serpParsed.sqm, 80);
+  assert.equal(msLinks[1].serpParsed.rooms, 2);
+  assert.equal(msLinks[1].serpParsed.district, 'Altstadt');
+  assert.equal(msLinks[1].serpParsed.is_private_landlord, false);
+
+  // Single-page enforcement on Meinestadt (page 2 returns baseUrl to prevent 403)
+  assert.equal(
+    buildPagedSearchUrl('https://www.meinestadt.de/gelsenkirchen/immobilien/wohnungen', 2, 'other'),
+    'https://www.meinestadt.de/gelsenkirchen/immobilien/wohnungen'
+  );
+
+  // Meinestadt detail parsing
+  const msDetailHtml = `
+    <html><body>
+      <h1>Anspruchsvolles Wohnen in bester Lage</h1>
+      <div>45879 Gelsenkirchen</div>
+      <table>
+        <tr><td>Kaltmiete: 816 €</td></tr>
+        <tr><td>Warmmiete: 1.188 €</td></tr>
+        <tr><td>Nebenkosten: 372 €</td></tr>
+        <tr><td>Heizkosten in Nebenkosten enthalten: Ja</td></tr>
+        <tr><td>Heizkosten: 120 €</td></tr>
+        <tr><td>Wohnfläche: 80 m²</td></tr>
+        <tr><td>Zimmer: 2</td></tr>
+      </table>
+      <div>Gewerblicher Anbieter</div>
+    </body></html>
+  `;
+  const msParsed = parseListingDetail(msDetailHtml, 'https://www.meinestadt.de/expose/29833630', 'other', 'Gelsenkirchen');
+  assert.equal(msParsed.cold_rent, 816);
+  assert.equal(msParsed.additional_costs, 252); // 372 - 120
+  assert.equal(msParsed.heating_costs, 120);
+  assert.equal(msParsed.sqm, 80);
+  assert.equal(msParsed.rooms, 2);
+  assert.equal(msParsed.zipcode, '45879');
+  assert.equal(msParsed.district, 'Altstadt');
+  assert.equal(msParsed.is_private_landlord, false);
+
+  assert.equal(
+    isListingOfflineHtml('', 'https://www.meinestadt.de/gelsenkirchen/immobilien/wohnungen', 200, 'other').offline,
+    true
+  );
 
   const qkListHtml = `
     <a href="/anzeigen/immobilienmarkt/vermietungen/vermietung-wohnungen/anzeige/helle-2-zi-wohnung/02hd5e891f8d797g2546fi39igg32e79.html">Helle 2-Zi Wohnung</a>

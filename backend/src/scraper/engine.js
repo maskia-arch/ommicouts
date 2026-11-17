@@ -534,6 +534,11 @@ export async function runDeltaPoll({ configId = null } = {}) {
 
             if (candidate.serpParsed && isAushang) {
               parsed = candidate.serpParsed;
+            } else if (candidate.serpParsed && candidate.url.includes('immowelt.de')) {
+              // Immowelt expose pages block datacenter/VPS IPs with HTTP 403 (DataDome).
+              // The SERP card already provides verified price, m², rooms, title, and district.
+              // We use candidate.serpParsed directly to prevent 403 blocks and speed up delta polls.
+              parsed = candidate.serpParsed;
             } else {
               // If SERP card already parsed everything (e.g. Immowelt), try detail page for NK/exact text,
               // and fall back cleanly to SERP card if detail page is blocked (403/429).
@@ -550,7 +555,7 @@ export async function runDeltaPoll({ configId = null } = {}) {
                   detailRes.html,
                   detailRes.finalUrl,
                   detailRes.statusCode,
-                  cfg.portal
+                  candidate.portal || cfg.portal
                 );
                 if (offlineCheck.offline) {
                   continue;
@@ -567,7 +572,7 @@ export async function runDeltaPoll({ configId = null } = {}) {
                   parsed = parseListingDetail(
                     detailRes.html,
                     detailRes.finalUrl || candidate.url,
-                    cfg.portal,
+                    candidate.portal || cfg.portal,
                     targetCity
                   );
                   if (!parsed.title && candidate.quickTitle) {
