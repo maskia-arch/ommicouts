@@ -74,10 +74,12 @@ export function computeListingPriorityScore(listing) {
   const portal = String(listing.portal || '').toLowerCase();
 
   // Primary municipal/landlord portals have top precedence
-  if (ext.startsWith('ge_aushang_') || url.includes('wohnungsaushang') || url.includes('gelsenkirchen.de')) {
+  if (ext.startsWith('ggw_') || url.includes('ggw-gelsenkirchen.de')) {
+    score += 45; // GGW Gelsenkirchen municipal housing company
+  } else if (ext.startsWith('ge_aushang_') || url.includes('wohnungsaushang')) {
     score += 50; // Official municipal board (direct landlord phone)
-  } else if (ext.startsWith('om_') || ext.startsWith('ggw_') || url.includes('ohne-makler.net') || url.includes('ggw-gelsenkirchen.de')) {
-    score += 40; // Direct landlord/housing company
+  } else if (ext.startsWith('om_') || url.includes('ohne-makler.net')) {
+    score += 40; // Direct landlord/housing company (Ohne-Makler)
   } else if (portal === 'kleinanzeigen' || url.includes('kleinanzeigen.de')) {
     score += 25;
   } else if (portal === 'immowelt' || url.includes('immowelt.de')) {

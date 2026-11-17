@@ -87,18 +87,21 @@ function formatEur(val: number | null | undefined): string {
   return `${Number(val).toFixed(2).replace('.', ',')} €`;
 }
 
-function formatPortal(portal: ListingItem['portal'], item?: ListingItem): string {
+export function formatPortal(
+  portal: ListingItem['portal'] | string,
+  item?: { url?: string | null; external_id?: string | null } | null
+): string {
   if (item) {
     const url = String(item.url || '').toLowerCase();
     const ext = String(item.external_id || '').toLowerCase();
-    if (ext.startsWith('ge_aushang_') || url.includes('wohnungsaushang') || url.includes('gelsenkirchen.de')) {
-      return 'Wohnungsaushang Gelsenkirchen';
+    if (ext.startsWith('ggw_') || url.includes('ggw-gelsenkirchen.de')) {
+      return 'GGW Gelsenkirchen';
     }
     if (ext.startsWith('om_') || url.includes('ohne-makler.net')) {
       return 'Ohne-Makler.net';
     }
-    if (ext.startsWith('ggw_') || url.includes('ggw-gelsenkirchen.de')) {
-      return 'GGW Gelsenkirchen';
+    if (ext.startsWith('ge_aushang_') || url.includes('wohnungsaushang')) {
+      return 'Wohnungsaushang Gelsenkirchen';
     }
     if (ext.startsWith('ms_') || url.includes('mietsofort.de')) {
       return 'MietSofort';
@@ -120,6 +123,8 @@ function formatPortal(portal: ListingItem['portal'], item?: ListingItem): string
       return 'Immowelt';
     case 'immoscout':
       return 'ImmoScout24';
+    case 'ggw':
+      return 'GGW Gelsenkirchen';
     default:
       return 'Direktanbieter';
   }

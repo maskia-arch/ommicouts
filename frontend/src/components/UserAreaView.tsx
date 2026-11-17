@@ -34,6 +34,7 @@ import type {
   UserNotification,
   UserProfile,
 } from '@/types/immo';
+import { formatPortal } from './ImmoMatcherClient';
 
 interface UserAreaViewProps {
   user: UserProfile;
@@ -900,7 +901,7 @@ export function UserAreaView({
                           {app.title}
                         </a>
                         <span className="rounded-md bg-slate-800 px-2 py-0.5 text-[11px] text-slate-300">
-                          {app.portal}
+                          {formatPortal(app.portal, { url: app.url, external_id: (app as any).external_id })}
                         </span>
                       </div>
 

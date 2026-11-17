@@ -43,6 +43,7 @@ function resolvePortalMeta(listing: ListingItem): {
   loginUrl: string;
 } {
   const url = String(listing.url || '').toLowerCase();
+  const ext = String(listing.external_id || '').toLowerCase();
   if (listing.portal === 'kleinanzeigen' || url.includes('kleinanzeigen.de')) {
     return {
       key: 'kleinanzeigen',
@@ -57,18 +58,18 @@ function resolvePortalMeta(listing: ListingItem): {
       loginUrl: 'https://www.immowelt.de/',
     };
   }
-  if (url.includes('ohne-makler.net')) {
-    return {
-      key: 'ohne_makler',
-      label: 'Ohne-Makler.net',
-      loginUrl: 'https://www.ohne-makler.net/accounts/login/',
-    };
-  }
-  if (url.includes('ggw-gelsenkirchen.de')) {
+  if (ext.startsWith('ggw_') || url.includes('ggw-gelsenkirchen.de')) {
     return {
       key: 'ggw',
       label: 'GGW Gelsenkirchen',
       loginUrl: 'https://www.ggw-gelsenkirchen.de/mietangebote/',
+    };
+  }
+  if (ext.startsWith('om_') || url.includes('ohne-makler.net')) {
+    return {
+      key: 'ohne_makler',
+      label: 'Ohne-Makler.net',
+      loginUrl: 'https://www.ohne-makler.net/accounts/login/',
     };
   }
   return {
