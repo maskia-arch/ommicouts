@@ -94,7 +94,7 @@ async function isListingSuppressed(externalId, url = null) {
   return rows.length > 0;
 }
 
-async function upsertParsedListing(parsed, rules) {
+export async function upsertParsedListing(parsed, rules) {
   if (await isListingSuppressed(parsed.external_id, parsed.url)) {
     return null;
   }
