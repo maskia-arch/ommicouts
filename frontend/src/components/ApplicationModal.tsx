@@ -5,10 +5,13 @@ import {
   BookmarkPlus,
   Check,
   Copy,
+  Dices,
   ExternalLink,
   FileText,
   Link2,
+  RotateCcw,
   ShieldCheck,
+  Sparkles,
   X,
 } from 'lucide-react';
 import type {
@@ -19,6 +22,11 @@ import type {
   UserApplication,
   UserProfile,
 } from '@/types/immo';
+import {
+  generateApplicationLetter,
+  LETTER_TONES,
+  type LetterTone,
+} from '@/services/applicationLetterGenerator';
 
 interface ApplicationModalProps {
   listing: ListingItem;
@@ -107,6 +115,15 @@ export function ApplicationModal({
   const [addressSchufaDirectly, setAddressSchufaDirectly] = useState(
     user?.address_schufa_directly ?? true
   );
+  const [tone, setTone] = useState<LetterTone>(() => {
+    // Smart default: if commercial landlord -> formal, if bgSize >= 2 -> warm, else natural
+    if (!listing.is_private_landlord) return 'formal';
+    if (bgSize >= 2) return 'warm';
+    return 'natural';
+  });
+  const [variantIndex, setVariantIndex] = useState(0);
+  const [userEditedText, setUserEditedText] = useState<string | null>(null);
+
   const [copied, setCopied] = useState(false);
   const [savingStatus, setSavingStatus] = useState<ApplicationStatus | null>(null);
   const [trackNotice, setTrackNotice] = useState<string | null>(null);
@@ -115,70 +132,41 @@ export function ApplicationModal({
   const portalMeta = useMemo(() => resolvePortalMeta(listing), [listing]);
   const linkedEntry = user?.linked_portals?.[portalMeta.key];
 
-  const authorityName =
-    benefitType === 'sgb12'
-      ? `Sozialamt ${listing.city} (SGB XII)`
-      : `Jobcenter ${listing.city} (SGB II)`;
-
-  const legalRef = benefitType === 'sgb12' ? '§ 35 Abs. 1 SGB XII' : '§ 22 Abs. 7 SGB II';
-
   const generatedText = useMemo(() => {
-    const nameLine = applicantName.trim() || '[Ihr Vor- und Nachname]';
-    const phoneLine = phone.trim() ? `\nTelefon: ${phone.trim()}` : '';
-    const locationPart = listing.district
-      ? ` in ${listing.city}-${listing.district}`
-      : ` in ${listing.city}`;
-    const sizePart = listing.sqm ? ` (${listing.sqm} m²` + (listing.rooms ? `, ${listing.rooms} Zimmer)` : ')') : '';
-
-    const kduComparison =
-      listing.compliance_status === 'tolerance'
-        ? `Die Bruttokaltmiete von ${formatEur(listing.calculated_bruttokalt)} liegt nahezu exakt im offiziellen Richtwert der Stadt ${listing.city} (${formatEur(rule.max_bruttokalt_eur)} für ${bgSize} ${bgSize === 1 ? 'Person' : 'Personen'}); ein eventueller geringer Restbetrag von ${formatEur(listing.eigenanteil_eur)} wird zuverlässig selbst getragen.`
-        : `Die Bruttokaltmiete von ${formatEur(listing.calculated_bruttokalt)} liegt zu 100 % innerhalb der aktuellen Angemessenheitsgrenze der Stadt ${listing.city} (Richtwert für ${bgSize} ${bgSize === 1 ? 'Person' : 'Personen'}: bis ${formatEur(rule.max_bruttokalt_eur)} Bruttokaltmiete). Damit ist die kurzfristige schriftliche Kostenübernahme (Zusicherung) durch das ${authorityName} vollständig gesichert.`;
-
-    const directTransferBlock = emphasizeDirectTransfer
-      ? `\n\nFür Sie als Vermieter bietet dies maximale Planungssicherheit:\nAuf Ihren Wunsch veranlasse ich direkt beim ${authorityName} eine verbindliche Direktabtretung (${legalRef}). Damit wird die monatliche Miete zu 100 % pünktlich, automatisiert und ausfallsicher direkt vom Amt auf Ihr Vermieterkonto überwiesen – jeden Monat zuverlässig zum Monatsanfang.`
-      : '';
-
-    const schufaBlock = addressSchufaDirectly
-      ? `\n\nOffenheit vorab: In meiner Schufa besteht aus der Vergangenheit leider noch ein älterer Eintrag. Gerade deshalb ist mir die Direktzahlung direkt durch das ${authorityName} wichtig – für Sie als Vermieter besteht dadurch faktisch kein Mietausfallrisiko.`
-      : '';
-
-    const greeting = listing.is_private_landlord
-      ? 'Sehr geehrte(r) Vermieter(in),'
-      : 'Sehr geehrte Damen und Herren,';
-
-    return `${greeting}
-
-mit großem Interesse habe ich Ihr Wohnungsangebot „${listing.title}“${locationPart}${sizePart} gesehen und möchte mich Ihnen kurz als zuverlässige(r) Mietinteressent(in) vorstellen.
-
-Zu meiner Person / unserem Haushalt: ${personalNote}. Ein Einzug wäre ${moveInDate} möglich.
-
-Wichtiger Vorteil für eine schnelle und unkomplizierte Abwicklung:
-${kduComparison}${directTransferBlock}${schufaBlock}
-
-Alle erforderlichen Unterlagen (Mietbescheinigung zur Vorlage beim Amt, Ausweis sowie auf Wunsch die Abtretungserklärung) bringe ich gerne direkt zu einem Besichtigungstermin mit.
-
-Über eine kurze Rückmeldung oder einen Besichtigungstermin freue ich mich sehr.
-
-Mit freundlichen Grüßen
-${nameLine}${phoneLine}`;
+    return generateApplicationLetter({
+      listing,
+      rule,
+      bgSize,
+      benefitType,
+      applicantName,
+      phone,
+      moveInDate,
+      personalNote,
+      emphasizeDirectTransfer,
+      addressSchufaDirectly,
+      tone,
+      variantIndex,
+    });
   }, [
+    listing,
+    rule,
+    bgSize,
+    benefitType,
     applicantName,
     phone,
     moveInDate,
     personalNote,
     emphasizeDirectTransfer,
     addressSchufaDirectly,
-    listing,
-    rule,
-    bgSize,
-    authorityName,
-    legalRef,
+    tone,
+    variantIndex,
   ]);
+
+  const activeText = userEditedText !== null ? userEditedText : generatedText;
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(generatedText);
+      await navigator.clipboard.writeText(activeText);
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
     } catch {
@@ -199,7 +187,7 @@ ${nameLine}${phoneLine}`;
         body: JSON.stringify({
           listing_id: listing.id,
           status,
-          message_text: generatedText,
+          message_text: activeText,
         }),
       });
       const json = await res.json();
@@ -373,7 +361,10 @@ ${nameLine}${phoneLine}`;
               <input
                 type="checkbox"
                 checked={emphasizeDirectTransfer}
-                onChange={(e) => setEmphasizeDirectTransfer(e.target.checked)}
+                onChange={(e) => {
+                  setEmphasizeDirectTransfer(e.target.checked);
+                  setUserEditedText(null);
+                }}
                 className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500"
               />
               Direktabtretung (100 % pünktlich) hervorheben
@@ -382,11 +373,68 @@ ${nameLine}${phoneLine}`;
               <input
                 type="checkbox"
                 checked={addressSchufaDirectly}
-                onChange={(e) => setAddressSchufaDirectly(e.target.checked)}
+                onChange={(e) => {
+                  setAddressSchufaDirectly(e.target.checked);
+                  setUserEditedText(null);
+                }}
                 className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500"
               />
               Schufa ehrlich &amp; beruhigend ansprechen
             </label>
+          </div>
+
+          {/* Tone / Variation Selector */}
+          <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3.5 space-y-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400">
+                  <Sparkles className="h-3.5 w-3.5 text-emerald-400" />
+                  Tonfall &amp; Stil (menschlich, ohne KI-Muster)
+                </span>
+                <p className="mt-0.5 text-[11px] text-slate-400">
+                  {LETTER_TONES.find((t) => t.key === tone)?.description}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setVariantIndex((prev) => (prev + 1) % 3);
+                  setUserEditedText(null);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/20 active:scale-95 self-start sm:self-auto"
+                title="Erzeugt eine alternative, natürliche Formulierung für denselben Tonfall"
+              >
+                <Dices className="h-3.5 w-3.5 text-emerald-400" />
+                Formulierung variieren
+                <span className="rounded bg-emerald-500/25 px-1.5 py-0.2 text-[10px] font-mono text-emerald-200">
+                  v{variantIndex + 1}/3
+                </span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {LETTER_TONES.map((t) => {
+                const isActive = tone === t.key;
+                return (
+                  <button
+                    key={t.key}
+                    type="button"
+                    onClick={() => {
+                      setTone(t.key);
+                      setUserEditedText(null);
+                    }}
+                    className={`rounded-xl px-3 py-2 text-xs font-semibold transition text-left sm:text-center ${
+                      isActive
+                        ? 'border border-emerald-500 bg-emerald-500/20 text-emerald-300 shadow-sm'
+                        : 'border border-slate-800 bg-slate-900/80 text-slate-300 hover:border-slate-700 hover:text-white'
+                    }`}
+                  >
+                    <div>{t.badge}</div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div>
@@ -394,15 +442,33 @@ ${nameLine}${phoneLine}`;
               <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400">
                 <FileText className="h-3.5 w-3.5" />
                 Kopierfertige Nachricht
+                {userEditedText !== null && (
+                  <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
+                    Individuell angepasst
+                  </span>
+                )}
               </span>
-              <span className="text-[11px] text-slate-400">
-                Direkt für Kleinanzeigen / Immowelt / E-Mail
-              </span>
+              <div className="flex items-center gap-2">
+                {userEditedText !== null && (
+                  <button
+                    type="button"
+                    onClick={() => setUserEditedText(null)}
+                    className="inline-flex items-center gap-1 text-[11px] text-amber-400 hover:text-amber-300 transition"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    Auf Vorlage zurücksetzen
+                  </button>
+                )}
+                <span className="text-[11px] text-slate-400">
+                  Frei anpassbar
+                </span>
+              </div>
             </div>
             <textarea
-              readOnly
               rows={13}
-              value={generatedText}
+              value={activeText}
+              onChange={(e) => setUserEditedText(e.target.value)}
+              placeholder="Hier steht dein individuelles Anschreiben..."
               className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3.5 text-sm leading-relaxed text-slate-100 focus:border-emerald-500 focus:outline-none"
             />
           </div>
