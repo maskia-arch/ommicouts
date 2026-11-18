@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import * as cheerio from 'cheerio';
 import LZString from 'lz-string';
+import { classifyLandlord } from '../services/landlordClassifier.js';
 
 export const GELSENKIRCHEN_ZIP_DISTRICTS = {
   '45879': ['Altstadt', 'Neustadt'],
@@ -486,7 +487,13 @@ export function parseMeinestadtSerpCard($, cardEl, absUrl, defaultCity = 'Gelsen
   const district = detectDistrict(cardText, defaultCity, zipcode) || defaultCity;
 
   let isPrivateLandlord = false;
-  if (cardText.includes('privates Angebot') || cardText.includes('Privatanbieter')) {
+  const cardClass = classifyLandlord({
+    fullText: cardText,
+    portal,
+  });
+  if (cardClass.isCommercial) {
+    isPrivateLandlord = false;
+  } else if (cardText.includes('privates Angebot') || cardText.includes('Privatanbieter')) {
     isPrivateLandlord = true;
   } else if (cardText.includes('gewerbliches Angebot') || cardText.includes('Gewerblicher Anbieter')) {
     isPrivateLandlord = false;
@@ -569,6 +576,16 @@ export function parseWohnungsaushangTable($, baseUrl, defaultCity = 'Gelsenkirch
 
     const title = `${rooms ? `${rooms}-Zimmer-Wohnung` : 'Mietwohnung'} in Gelsenkirchen-${district}${streetCandidate ? `, ${streetCandidate}` : ''}${sqm ? ` (${sqm} m²)` : ''}`;
 
+    const landlordClass = classifyLandlord({
+      phone: phoneText,
+      sellerName: '',
+      fullText: `${title} ${addressText} ${phoneText}`,
+      portal: 'wohnungsaushang',
+    });
+
+    const isPrivateLandlord = landlordClass.isPrivate;
+    const resolvedContactName = landlordClass.commercialName || 'Vermieter (Wohnungsaushang)';
+
     const serpParsed = {
       external_id: externalId,
       portal: 'other',
@@ -583,13 +600,13 @@ export function parseWohnungsaushangTable($, baseUrl, defaultCity = 'Gelsenkirch
       heating_costs: 0,
       sqm,
       rooms,
-      is_private_landlord: true,
+      is_private_landlord: isPrivateLandlord,
       wbs_required: true,
       is_wanted: false,
-      contact_name: 'Vermieter (Wohnungsaushang)',
+      contact_name: resolvedContactName,
       contact_phone: phoneText || null,
       contact_email: null,
-      description_snippet: `Kommunaler Wohnungsaushang Gelsenkirchen: ${rooms || '?'} Zimmer, ${sqm || '?'} m², Kaltmiete ${coldRent || '?'} €. WBS erforderlich. Kontakt: ${phoneText || 'Stadt Gelsenkirchen'}`.slice(0, 500),
+      description_snippet: `Kommunaler Wohnungsaushang Gelsenkirchen: ${rooms || '?'} Zimmer, ${sqm || '?'} m², Kaltmiete ${coldRent || '?'} €. WBS erforderlich. Kontakt: ${resolvedContactName} (${phoneText || 'Stadt Gelsenkirchen'})`.slice(0, 500),
     };
 
     candidates.push({
@@ -991,7 +1008,25 @@ export function detectPrivateLandlord({
   sellerName = '',
   fullText = '',
   portal = 'other',
+  phone = '',
+  email = '',
 }) {
+  const classified = classifyLandlord({
+    phone,
+    email,
+    sellerName,
+    sellerTypeRaw,
+    fullText,
+    portal,
+  });
+
+  if (classified.isCommercial) {
+    return false;
+  }
+  if (classified.isPrivate) {
+    return true;
+  }
+
   const combinedSeller = `${sellerTypeRaw} ${sellerName}`.toLowerCase();
   const lowerText = fullText.toLowerCase();
 
@@ -1720,20 +1755,36 @@ export function parseListingDetail(html, url, portal = null, defaultCity = 'Gels
   if (!zipcode) zipcode = detectZipcode(`${localityRaw} ${fullText}`);
   district = resolveDistrictByZip(district, `${localityRaw} ${title}`, defaultCity, zipcode);
 
-  const isPrivateLandlord = detectPrivateLandlord({
-    sellerTypeRaw,
-    sellerName,
-    fullText: `${sellerName} ${fullText}`,
-    portal: resolvedPortal,
-  });
-
-  const wbsRequired = wbsExplicit !== null ? wbsExplicit : detectWbsRequired(fullText);
   const contactInfo = extractContactInfo($, {
     jsonLds,
     nextData,
     sellerName,
     text: `${sellerName}\n${descriptionText}\n${$('footer').text().slice(0, 800)}`,
   });
+
+  const landlordClass = classifyLandlord({
+    phone: contactInfo.contact_phone || '',
+    email: contactInfo.contact_email || '',
+    sellerName: contactInfo.contact_name || sellerName,
+    sellerTypeRaw,
+    fullText: `${sellerName} ${fullText}`,
+    portal: resolvedPortal,
+  });
+
+  const isPrivateLandlord = landlordClass.isCommercial
+    ? false
+    : landlordClass.isPrivate ||
+      detectPrivateLandlord({
+        sellerTypeRaw,
+        sellerName: contactInfo.contact_name || sellerName,
+        fullText: `${sellerName} ${fullText}`,
+        portal: resolvedPortal,
+        phone: contactInfo.contact_phone || '',
+        email: contactInfo.contact_email || '',
+      });
+
+  const finalContactName = landlordClass.commercialName || contactInfo.contact_name || null;
+  const wbsRequired = wbsExplicit !== null ? wbsExplicit : detectWbsRequired(fullText);
 
   return {
     external_id: externalId,
@@ -1752,7 +1803,7 @@ export function parseListingDetail(html, url, portal = null, defaultCity = 'Gels
     is_private_landlord: Boolean(isPrivateLandlord),
     wbs_required: Boolean(wbsRequired),
     is_wanted: Boolean(isWanted),
-    contact_name: contactInfo.contact_name,
+    contact_name: finalContactName,
     contact_phone: contactInfo.contact_phone,
     contact_email: contactInfo.contact_email,
     description_snippet: descriptionText.slice(0, 800),

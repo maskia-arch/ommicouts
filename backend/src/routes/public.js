@@ -299,6 +299,7 @@ router.get('/wohnungsaushang/view', async (req, res) => {
     <div class="badge-row">
       <span class="badge">🏛️ Stadt Gelsenkirchen · Wohnungsaushang</span>
       <span class="badge badge-amber">WBS erforderlich</span>
+      ${listing.is_private_landlord ? '<span class="badge" style="border-color: rgba(56,189,248,0.4); color: #38bdf8; background: rgba(56,189,248,0.15);">👤 Von Privat</span>' : '<span class="badge" style="border-color: rgba(148,163,184,0.3); color: #cbd5e1; background: rgba(148,163,184,0.1);">🏢 Gewerblicher Anbieter / Hausverwaltung</span>'}
       <span class="badge">100% KdU-Konform (${bgStr})</span>
     </div>
 
@@ -326,7 +327,7 @@ router.get('/wohnungsaushang/view', async (req, res) => {
       <h3>Offizieller Anbieterkontakt</h3>
       <div class="name">${safeContact}</div>
       ${phone ? `<div class="phone">${phone}</div>` : '<div class="phone">Keine Direktnummer</div>'}
-      ${phone ? `<a href="tel:${cleanPhone}" class="btn-call">📞 Vermieter jetzt anrufen (${phone})</a>` : ''}
+      ${phone ? `<a href="tel:${cleanPhone}" class="btn-call">📞 ${listing.is_private_landlord ? 'Privatvermieter' : 'Anbieter / Verwaltung'} jetzt anrufen (${phone})</a>` : ''}
     </div>
 
     <div class="info-box">

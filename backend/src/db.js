@@ -543,11 +543,17 @@ export async function cleanupInvalidListings() {
     }
   }
 
+  const { reclassifyLandlordsInDb } = await import('./services/landlordClassifier.js');
+  const reclass = await reclassifyLandlordsInDb(pool);
+
   const countRes = await pool.query(`SELECT COUNT(*)::int AS remaining FROM listings WHERE status = 'active'`);
   return {
     deletedCount: rowCount || 0,
     deduplicatedCount: dedup.deduplicatedCount || 0,
     normalizedDistricts,
+    reclassifiedLandlords: reclass.updatedCount,
+    commercialCount: reclass.commercialCount,
+    privateCount: reclass.privateCount,
     remainingCount: countRes.rows[0]?.remaining || 0,
   };
 }
@@ -580,7 +586,7 @@ export async function ensureDatabaseInitialized(retries = 10, delayMs = 2000) {
 
       const cleanup = await cleanupInvalidListings();
       console.log(
-        `[DB] PostgreSQL verbunden, Schema/Configs aktuell. Cleanup: ${cleanup.deletedCount} fehlerhafte + ${cleanup.deduplicatedCount} Duplikate bereinigt (${cleanup.remainingCount} aktive verbleibend).`
+        `[DB] PostgreSQL verbunden, Schema/Configs aktuell. Cleanup: ${cleanup.deletedCount} fehlerhafte + ${cleanup.deduplicatedCount} Duplikate bereinigt (${cleanup.remainingCount} aktive verbleibend; Vermieter: ${cleanup.privateCount} privat, ${cleanup.commercialCount} gewerblich).`
       );
       return;
     } catch (err) {

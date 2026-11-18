@@ -173,10 +173,13 @@ export async function upsertParsedListing(parsed, rules) {
        calculated_bruttokalt = EXCLUDED.calculated_bruttokalt,
        sqm = COALESCE(EXCLUDED.sqm, listings.sqm),
        rooms = COALESCE(EXCLUDED.rooms, listings.rooms),
-       is_private_landlord = EXCLUDED.is_private_landlord,
+       is_private_landlord = CASE WHEN listings.is_private_landlord = FALSE THEN FALSE ELSE EXCLUDED.is_private_landlord END,
        wbs_required = EXCLUDED.wbs_required,
        matched_min_bg_size = EXCLUDED.matched_min_bg_size,
-       contact_name = COALESCE(NULLIF(listings.contact_name, ''), EXCLUDED.contact_name),
+       contact_name = CASE
+         WHEN EXCLUDED.contact_name IS NOT NULL AND EXCLUDED.contact_name NOT IN ('', 'Vermieter (Wohnungsaushang)', 'Vermieter', 'Anbieter') THEN EXCLUDED.contact_name
+         ELSE COALESCE(NULLIF(listings.contact_name, ''), EXCLUDED.contact_name)
+       END,
        contact_phone = COALESCE(NULLIF(listings.contact_phone, ''), EXCLUDED.contact_phone),
        contact_email = COALESCE(NULLIF(listings.contact_email, ''), EXCLUDED.contact_email),
        status = CASE WHEN listings.status = 'manual_hidden' THEN 'manual_hidden' ELSE 'active' END,
