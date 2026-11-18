@@ -348,10 +348,6 @@ router.get('/wohnungsaushang/view', async (req, res) => {
     return res.redirect(targetUrl);
   }
 });
-  } catch {
-    return res.redirect(targetUrl);
-  }
-});
 
 router.get('/health', async (_req, res) => {
   try {
