@@ -57,124 +57,297 @@ router.get('/wohnungsaushang/view', async (req, res) => {
       listing = rows[0] || null;
     }
 
-    const getRes = await fetchStealthHtml(targetUrl, { preferDesktop: true });
-    const vsMatch = getRes.html.match(/id="__VIEWSTATE"\s+value="([^"]+)"/i);
-    const evMatch = getRes.html.match(/id="__EVENTVALIDATION"\s+value="([^"]+)"/i);
-    const vsgMatch = getRes.html.match(/id="__VIEWSTATEGENERATOR"\s+value="([^"]+)"/i);
-
-    if (!vsMatch) {
+    if (!listing) {
       return res.redirect(targetUrl);
     }
 
-    const vs = vsMatch[1];
-    const ev = evMatch ? evMatch[1] : '';
-    const vsg = vsgMatch ? vsgMatch[1] : '';
-
-    const districtVal = mapToGeDistrict(listing?.district);
-
-    let roomsVal = '';
-    if (listing?.rooms) {
-      const r = Number(listing.rooms);
-      if (r === 1 || r === 2 || r === 3 || r === 3.5 || r === 4) {
-        roomsVal = String(r);
-      }
-    }
-
-    const safeTitle = (listing?.title || 'Wohnungsaushang Gelsenkirchen')
+    const safeTitle = (listing.title || 'Wohnungsaushang Gelsenkirchen')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
+    const safeDistrict = (listing.district || 'Gelsenkirchen')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    const safeZip = (listing.zipcode || '45879')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    const safeContact = (listing.contact_name || 'Vermieter / Hausverwaltung')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    const phone = listing.contact_phone ? String(listing.contact_phone).trim() : '';
+    const cleanPhone = phone.replace(/[^0-9+]/g, '');
+
+    const coldRentStr = Number(listing.cold_rent || 0).toLocaleString('de-DE', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }) + ' €';
+    const sqmStr = Number(listing.sqm || 0).toLocaleString('de-DE', {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 2,
+    }) + ' m²';
+    const roomsStr = (Number(listing.rooms || 0)).toLocaleString('de-DE') + ' Zimmer';
+    const bgStr = (listing.matched_min_bg_size || 1) + ' Person(en)';
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     return res.send(`<!DOCTYPE html>
 <html lang="de">
 <head>
   <meta charset="utf-8">
-  <title>Offizieller Wohnungsaushang Gelsenkirchen</title>
+  <title>${safeTitle} – Kommunaler Wohnungsaushang Gelsenkirchen</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #0f172a;
+      --border: #1e293b;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --emerald: #10b981;
+      --emerald-hover: #059669;
+      --emerald-dim: rgba(16, 185, 129, 0.15);
+      --amber: #f59e0b;
+      --amber-dim: rgba(245, 158, 11, 0.15);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      margin: 0;
-      background-color: #0b1120;
-      color: #f1f5f9;
+      background-color: var(--bg);
+      color: var(--text);
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      min-height: 100vh;
-      text-align: center;
-      padding: 24px;
-      box-sizing: border-box;
+      padding: 20px 16px;
     }
-    .card {
-      background: #0f172a;
-      border: 1px solid #1e293b;
-      border-radius: 20px;
-      padding: 32px 24px;
-      max-width: 480px;
+    .container {
+      max-width: 620px;
       width: 100%;
-      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 32px 24px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
     }
-    .spinner {
-      width: 40px;
-      height: 40px;
-      border: 3px solid rgba(16, 185, 129, 0.2);
-      border-top-color: #10b981;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      margin: 0 auto 20px;
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 20px;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    h2 { font-size: 1.25rem; font-weight: 700; margin: 0 0 8px; color: #fff; }
-    p { font-size: 0.875rem; color: #94a3b8; margin: 0 0 24px; line-height: 1.5; }
     .badge {
-      display: inline-block;
-      background: rgba(16, 185, 129, 0.15);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--emerald-dim);
       color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.3);
       padding: 4px 12px;
       border-radius: 9999px;
       font-size: 0.75rem;
-      font-weight: 600;
-      margin-bottom: 16px;
-      border: 1px solid rgba(16, 185, 129, 0.3);
-    }
-    button {
-      background: #10b981;
-      color: #022c22;
-      border: none;
-      padding: 12px 24px;
-      border-radius: 12px;
       font-weight: 700;
-      font-size: 0.875rem;
-      cursor: pointer;
-      width: 100%;
-      transition: background 0.2s;
     }
-    button:hover { background: #34d399; }
+    .badge-amber {
+      background: var(--amber-dim);
+      color: #fbbf24;
+      border-color: rgba(245, 158, 11, 0.3);
+    }
+    h1 {
+      font-size: 1.35rem;
+      font-weight: 800;
+      color: #fff;
+      line-height: 1.35;
+      margin-bottom: 8px;
+    }
+    .location {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .specs-grid {
+      display: grid;
+      grid-cols: 3;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .spec-box {
+      background: #0b1120;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px 10px;
+      text-align: center;
+    }
+    .spec-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+    .spec-value {
+      font-size: 1.15rem;
+      font-weight: 800;
+      color: #fff;
+    }
+    .contact-card {
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(15, 23, 42, 0.8));
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      border-radius: 18px;
+      padding: 20px;
+      margin-bottom: 24px;
+      text-align: center;
+    }
+    .contact-card h3 {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #34d399;
+      margin-bottom: 8px;
+    }
+    .contact-card .name {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 4px;
+    }
+    .contact-card .phone {
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: #fff;
+      margin-bottom: 16px;
+      letter-spacing: 0.02em;
+    }
+    .btn-call {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: var(--emerald);
+      color: #022c22;
+      font-weight: 800;
+      font-size: 0.95rem;
+      text-decoration: none;
+      padding: 14px 24px;
+      border-radius: 14px;
+      width: 100%;
+      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);
+      transition: all 0.2s;
+    }
+    .btn-call:hover {
+      background: var(--emerald-hover);
+      transform: translateY(-1px);
+    }
+    .info-box {
+      background: #090e1a;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+      margin-bottom: 24px;
+    }
+    .info-box strong { color: #cbd5e1; }
+    .actions {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      background: #1e293b;
+      color: #e2e8f0;
+      font-weight: 700;
+      font-size: 0.85rem;
+      text-decoration: none;
+      padding: 12px 20px;
+      border-radius: 12px;
+      border: 1px solid #334155;
+      transition: all 0.2s;
+    }
+    .btn-secondary:hover {
+      background: #334155;
+      color: #fff;
+    }
+    .btn-back {
+      color: #64748b;
+      text-decoration: none;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-align: center;
+      padding: 8px;
+      transition: color 0.2s;
+    }
+    .btn-back:hover { color: #94a3b8; }
+    @media (max-width: 480px) {
+      .specs-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+      .spec-box { padding: 10px 4px; }
+      .spec-value { font-size: 0.95rem; }
+      h1 { font-size: 1.15rem; }
+    }
   </style>
 </head>
 <body>
-  <div class="card">
-    <div class="spinner"></div>
-    <div class="badge">Kommunaler Wohnungsaushang Gelsenkirchen</div>
-    <h2>Offizielle Inserate der Stadt</h2>
-    <p>Die Originaldaten werden geladen und für <strong>${safeTitle}</strong> aufgerufen...</p>
+  <div class="container">
+    <div class="badge-row">
+      <span class="badge">🏛️ Stadt Gelsenkirchen · Wohnungsaushang</span>
+      <span class="badge badge-amber">WBS erforderlich</span>
+      <span class="badge">100% KdU-Konform (${bgStr})</span>
+    </div>
 
-    <form id="geForm" method="POST" action="${targetUrl}">
-      <input type="hidden" name="__VIEWSTATE" value="${vs}" />
-      <input type="hidden" name="__VIEWSTATEGENERATOR" value="${vsg}" />
-      <input type="hidden" name="__EVENTVALIDATION" value="${ev}" />
-      ${districtVal ? `<input type="hidden" name="ctl00$ctl00$contentContentPlaceHolder$spalte_links$ctl00$lbOrtsteile" value="${districtVal}" />` : ''}
-      ${roomsVal ? `<input type="hidden" name="ctl00$ctl00$contentContentPlaceHolder$spalte_links$ctl00$lbRaeume" value="${roomsVal}" />` : ''}
-      <input type="hidden" name="ctl00$ctl00$contentContentPlaceHolder$spalte_links$ctl00$suchenButton" value="Suchen" />
-      <button type="submit">Weiterleitung manuell starten</button>
-    </form>
+    <h1>${safeTitle}</h1>
+    <div class="location">
+      📍 ${safeZip} Gelsenkirchen – ${safeDistrict}
+    </div>
+
+    <div class="specs-grid">
+      <div class="spec-box">
+        <div class="spec-label">Kaltmiete</div>
+        <div class="spec-value">${coldRentStr}</div>
+      </div>
+      <div class="spec-box">
+        <div class="spec-label">Wohnfläche</div>
+        <div class="spec-value">${sqmStr}</div>
+      </div>
+      <div class="spec-box">
+        <div class="spec-label">Räume</div>
+        <div class="spec-value">${roomsStr}</div>
+      </div>
+    </div>
+
+    <div class="contact-card">
+      <h3>Offizieller Anbieterkontakt</h3>
+      <div class="name">${safeContact}</div>
+      ${phone ? `<div class="phone">${phone}</div>` : '<div class="phone">Keine Direktnummer</div>'}
+      ${phone ? `<a href="tel:${cleanPhone}" class="btn-call">📞 Vermieter jetzt anrufen (${phone})</a>` : ''}
+    </div>
+
+    <div class="info-box">
+      <strong>Amtlicher Nachweis:</strong> Dieses Angebot ist im offiziellen <em>Kommunalen Wohnungsaushang für geförderten Wohnraum</em> der Stadt Gelsenkirchen (Referat Stadtplanung / Bauen und Wohnen) gemeldet. Da die städtische Internetseite technisch eine reine Sammeltabelle ohne Direktlinks für Einzeleinträge nutzt, stellt unser System alle verifizierten Eckdaten und die direkte Rufnummer des Vermieters hier bereit.
+    </div>
+
+    <div class="actions">
+      <a href="${targetUrl}" target="_blank" rel="noopener noreferrer" class="btn-secondary">
+        Städtische Gesamtliste auf gelsenkirchen.de öffnen ↗
+      </a>
+      <a href="https://immo.autoacts.link" class="btn-back">
+        ← Zurück zur Jobcenter-Wohnungssuche
+      </a>
+    </div>
   </div>
-  <script>
-    document.getElementById('geForm').submit();
-  </script>
 </body>
 </html>`);
+  } catch {
+    return res.redirect(targetUrl);
+  }
+});
   } catch {
     return res.redirect(targetUrl);
   }

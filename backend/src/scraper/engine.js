@@ -302,6 +302,13 @@ export async function fetchWohnungsaushangTable(url, { proxyUrl = null } = {}) {
   const getRes = await fetchStealthHtml(url, { proxyUrl, preferDesktop: true });
   if (getRes.statusCode >= 400) return getRes;
 
+  const cookieHeader = getRes.headers?.['set-cookie'];
+  const cookies = Array.isArray(cookieHeader)
+    ? cookieHeader.map((c) => c.split(';')[0]).join('; ')
+    : typeof cookieHeader === 'string'
+      ? cookieHeader.split(';')[0]
+      : '';
+
   const vsMatch = getRes.html.match(/id="__VIEWSTATE"\s+value="([^"]+)"/i);
   const evMatch = getRes.html.match(/id="__EVENTVALIDATION"\s+value="([^"]+)"/i);
   const vsgMatch = getRes.html.match(/id="__VIEWSTATEGENERATOR"\s+value="([^"]+)"/i);
@@ -314,6 +321,10 @@ export async function fetchWohnungsaushangTable(url, { proxyUrl = null } = {}) {
     proxyUrl,
     preferDesktop: true,
     referer: url,
+    extraHeaders: {
+      ...(cookies ? { Cookie: cookies } : {}),
+      Origin: 'https://www.gelsenkirchen.de',
+    },
     form: {
       __VIEWSTATE: vsMatch[1],
       __VIEWSTATEGENERATOR: vsgMatch ? vsgMatch[1] : '',
