@@ -38,3 +38,12 @@ test('findMatchedMinBgSize finds smallest matching BG size per Produkttheorie', 
   assert.equal(findMatchedMinBgSize(958.1, GE_RULES), 6);
   assert.equal(findMatchedMinBgSize(1000.0, GE_RULES), 7);
 });
+
+test('findMatchedMinBgSize respects max_sqm limits', () => {
+  // Rent fits BG 1 (350 <= 367.5), but 55 sqm exceeds BG 1 (50 sqm) -> must match BG 2 (up to 65 sqm)
+  assert.equal(findMatchedMinBgSize(350.0, GE_RULES, 55), 2);
+  // Rent fits BG 1, 45 sqm fits BG 1 -> matches BG 1
+  assert.equal(findMatchedMinBgSize(350.0, GE_RULES, 45), 1);
+  // Rent fits BG 1, but 115 sqm exceeds BG 1..5 -> matches BG 6
+  assert.equal(findMatchedMinBgSize(350.0, GE_RULES, 115), 6);
+});

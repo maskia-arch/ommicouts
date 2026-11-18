@@ -225,6 +225,8 @@ router.get('/listings', optionalUserAuth, async (req, res) => {
     const wbs = String(req.query.wbs || 'all').trim(); // 'all' | 'without' | 'only'
     const search = String(req.query.search || '').trim();
     const sort = String(req.query.sort || 'newest').trim();
+    const minRooms = Math.max(0, parseFloat(req.query.min_rooms || '0') || 0);
+    const minSqm = Math.max(0, parseFloat(req.query.min_sqm || '0') || 0);
     const page = Math.max(1, parseInt(req.query.page || '1', 10) || 1);
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit || '24', 10) || 24));
     const offset = (page - 1) * limit;
@@ -249,6 +251,25 @@ router.get('/listings', optionalUserAuth, async (req, res) => {
     ];
     const params = [city, maxBruttokaltFilter];
     let idx = params.length;
+
+    // Strict Jobcenter sqm upper bound for household size (e.g. max 50 sqm for 1 person)
+    if (activeRule.max_sqm) {
+      idx++;
+      where.push(`(sqm IS NULL OR sqm <= $${idx})`);
+      params.push(activeRule.max_sqm);
+    }
+
+    if (minRooms > 0) {
+      idx++;
+      where.push(`rooms IS NOT NULL AND rooms >= $${idx}`);
+      params.push(minRooms);
+    }
+
+    if (minSqm > 0) {
+      idx++;
+      where.push(`sqm IS NOT NULL AND sqm >= $${idx}`);
+      params.push(minSqm);
+    }
 
     if (req.user?.id) {
       idx++;
@@ -338,11 +359,7 @@ router.get('/listings', optionalUserAuth, async (req, res) => {
       const bk = Number(row.calculated_bruttokalt);
       const sqmNum = row.sqm !== null ? Number(row.sqm) : null;
       const isStrict = bk <= strictLimit;
-      let complianceStatus = 'tolerance';
-      if (isStrict) {
-        complianceStatus =
-          sqmNum !== null && sqmNum > activeRule.max_sqm ? 'produkttheorie' : 'compliant';
-      }
+      const complianceStatus = isStrict ? 'compliant' : 'tolerance';
 
       const isWohnungsaushang =
         row.external_id?.startsWith('ge_aushang_') ||
@@ -373,6 +390,8 @@ router.get('/listings', optionalUserAuth, async (req, res) => {
       city,
       bg_size: bgSize,
       benefit_type: benefitType,
+      min_rooms: minRooms,
+      min_sqm: minSqm,
       rule: activeRule,
       tolerance_limit_eur: toleranceLimit,
       include_tolerance: includeTolerance,

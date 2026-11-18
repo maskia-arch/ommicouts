@@ -151,6 +151,8 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
   const [city, setCity] = useState<string>(initialData?.city || 'Gelsenkirchen');
   const [benefitType, setBenefitType] = useState<'sgb2' | 'sgb12'>('sgb2');
   const [bgSize, setBgSize] = useState<number>(initialData?.bg_size || 1);
+  const [minRooms, setMinRooms] = useState<number>(0);
+  const [minSqm, setMinSqm] = useState<number>(0);
   const [privateOnly, setPrivateOnly] = useState<boolean>(false);
   const [includeTolerance, setIncludeTolerance] = useState<boolean>(false);
   const [district, setDistrict] = useState<string>('all');
@@ -431,6 +433,8 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
         page: String(page),
         limit: '24',
       });
+      if (minRooms > 0) params.append('min_rooms', String(minRooms));
+      if (minSqm > 0) params.append('min_sqm', String(minSqm));
 
       const res = await fetch(`/api/listings?${params.toString()}`, { cache: 'no-store' });
       const json = await res.json();
@@ -443,7 +447,7 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
     } finally {
       setLoading(false);
     }
-  }, [city, bgSize, benefitType, privateOnly, includeTolerance, district, wbs, sort, page]);
+  }, [city, bgSize, benefitType, privateOnly, includeTolerance, district, wbs, sort, minRooms, minSqm, page]);
 
   useEffect(() => {
     fetchListings();
@@ -938,6 +942,85 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                       </button>
                     </div>
                   </div>
+                </div>
+
+                {/* 4b. Mindestanforderungen (Räume & Wohnfläche) */}
+                <div className="space-y-1.5 pt-0.5">
+                  <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    <span className="flex items-center gap-1.5">
+                      <SlidersHorizontal className="h-3.5 w-3.5 text-emerald-400" />
+                      Mindestgröße
+                    </span>
+                    {(minRooms > 0 || minSqm > 0) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMinRooms(0);
+                          setMinSqm(0);
+                          setPage(1);
+                        }}
+                        className="text-[10px] font-medium text-slate-400 hover:text-emerald-300"
+                      >
+                        Zurücksetzen
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="mb-1 block text-[11px] font-medium text-slate-400">
+                        Min. Räume
+                      </label>
+                      <select
+                        value={minRooms}
+                        onChange={(e) => {
+                          setMinRooms(Number(e.target.value));
+                          setPage(1);
+                        }}
+                        className="w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1.5 text-xs text-white focus:border-emerald-500 focus:outline-none"
+                      >
+                        <option value={0}>Alle Räume</option>
+                        <option value={1}>Ab 1 Zi.</option>
+                        <option value={1.5}>Ab 1,5 Zi.</option>
+                        <option value={2}>Ab 2 Zi.</option>
+                        <option value={2.5}>Ab 2,5 Zi.</option>
+                        <option value={3}>Ab 3 Zi.</option>
+                        <option value={3.5}>Ab 3,5 Zi.</option>
+                        <option value={4}>Ab 4 Zi.</option>
+                        <option value={5}>Ab 5 Zi.</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-[11px] font-medium text-slate-400">
+                        Min. qm
+                      </label>
+                      <select
+                        value={minSqm}
+                        onChange={(e) => {
+                          setMinSqm(Number(e.target.value));
+                          setPage(1);
+                        }}
+                        className="w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-1.5 text-xs text-white focus:border-emerald-500 focus:outline-none"
+                      >
+                        <option value={0}>Beliebig</option>
+                        <option value={30}>Ab 30 m²</option>
+                        <option value={40}>Ab 40 m²</option>
+                        <option value={50}>Ab 50 m²</option>
+                        <option value={60}>Ab 60 m²</option>
+                        <option value={70}>Ab 70 m²</option>
+                        <option value={80}>Ab 80 m²</option>
+                        <option value={90}>Ab 90 m²</option>
+                        <option value={100}>Ab 100 m²</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {bgSize > 1 && (
+                    <div className="rounded-md bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-300">
+                      💡 Tipp: Für {bgSize} Personen gezielt ab {Math.max(2, Math.floor(bgSize * 0.8))} Zimmer filtern
+                    </div>
+                  )}
                 </div>
 
                 {/* 5. Toggles ("Nur private Vermieter" & "+10 % Toleranz") */}
@@ -1854,6 +1937,85 @@ export function ImmoMatcherClient({ initialCities, initialData }: ImmoMatcherCli
                     </button>
                   </div>
                 </div>
+              </div>
+
+              {/* 4b. Mindestanforderungen (Räume & Wohnfläche) */}
+              <div className="space-y-1.5 pt-0.5">
+                <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  <span className="flex items-center gap-1.5">
+                    <SlidersHorizontal className="h-3.5 w-3.5 text-emerald-400" />
+                    Mindestgröße
+                  </span>
+                  {(minRooms > 0 || minSqm > 0) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMinRooms(0);
+                        setMinSqm(0);
+                        setPage(1);
+                      }}
+                      className="text-[10px] font-medium text-slate-400 hover:text-emerald-300"
+                    >
+                      Zurücksetzen
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-slate-400">
+                      Min. Räume
+                    </label>
+                    <select
+                      value={minRooms}
+                      onChange={(e) => {
+                        setMinRooms(Number(e.target.value));
+                        setPage(1);
+                      }}
+                      className="w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+                    >
+                      <option value={0}>Alle Räume</option>
+                      <option value={1}>Ab 1 Zi.</option>
+                      <option value={1.5}>Ab 1,5 Zi.</option>
+                      <option value={2}>Ab 2 Zi.</option>
+                      <option value={2.5}>Ab 2,5 Zi.</option>
+                      <option value={3}>Ab 3 Zi.</option>
+                      <option value={3.5}>Ab 3,5 Zi.</option>
+                      <option value={4}>Ab 4 Zi.</option>
+                      <option value={5}>Ab 5 Zi.</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-slate-400">
+                      Min. qm
+                    </label>
+                    <select
+                      value={minSqm}
+                      onChange={(e) => {
+                        setMinSqm(Number(e.target.value));
+                        setPage(1);
+                      }}
+                      className="w-full rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+                    >
+                      <option value={0}>Beliebig</option>
+                      <option value={30}>Ab 30 m²</option>
+                      <option value={40}>Ab 40 m²</option>
+                      <option value={50}>Ab 50 m²</option>
+                      <option value={60}>Ab 60 m²</option>
+                      <option value={70}>Ab 70 m²</option>
+                      <option value={80}>Ab 80 m²</option>
+                      <option value={90}>Ab 90 m²</option>
+                      <option value={100}>Ab 100 m²</option>
+                    </select>
+                  </div>
+                </div>
+
+                {bgSize > 1 && (
+                  <div className="rounded-md bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-300">
+                    💡 Tipp: Für {bgSize} Personen gezielt ab {Math.max(2, Math.floor(bgSize * 0.8))} Zimmer filtern
+                  </div>
+                )}
               </div>
 
               {/* 5. Toggles */}

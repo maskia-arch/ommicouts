@@ -100,7 +100,7 @@ export async function upsertParsedListing(parsed, rules) {
   }
 
   const calculatedBruttokalt = computeBruttokalt(parsed.cold_rent, parsed.additional_costs);
-  const matchedMinBgSize = findMatchedMinBgSize(calculatedBruttokalt, rules);
+  const matchedMinBgSize = findMatchedMinBgSize(calculatedBruttokalt, rules, parsed.sqm);
 
   const { rows: beforeRows } = await pool.query(
     `SELECT * FROM listings WHERE external_id = $1 LIMIT 1`,

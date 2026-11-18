@@ -65,11 +65,13 @@ export function resolveRuleForBgSize(rules, bgSize) {
 }
 
 /**
- * Applies SGB II / BSG Produkttheorie:
- * The decisive criterion for KdU appropriateness is Bruttokaltmiete <= max_bruttokalt_eur.
- * Returns the smallest bg_size (1..15) that covers this Bruttokaltmiete, or null.
+ * Applies SGB II / KdU matching:
+ * For a household of size bg_size to be approved by Jobcenter, BOTH criteria must hold:
+ * 1. Bruttokaltmiete <= max_bruttokalt_eur
+ * 2. Wohnfläche <= max_sqm (if known)
+ * Returns the smallest bg_size (1..15) that covers both this Bruttokaltmiete and Wohnfläche, or null.
  */
-export function findMatchedMinBgSize(calculatedBruttokalt, rules) {
+export function findMatchedMinBgSize(calculatedBruttokalt, rules, sqm = null) {
   if (
     calculatedBruttokalt === null ||
     calculatedBruttokalt === undefined ||
@@ -82,9 +84,17 @@ export function findMatchedMinBgSize(calculatedBruttokalt, rules) {
   }
 
   const bk = Number(calculatedBruttokalt);
+  const sqmNum =
+    sqm !== null && sqm !== undefined && Number.isFinite(Number(sqm)) && Number(sqm) > 0
+      ? Number(sqm)
+      : null;
+
   for (let bg = 1; bg <= 15; bg++) {
     const rule = resolveRuleForBgSize(rules, bg);
-    if (rule && bk <= rule.max_bruttokalt_eur) {
+    if (!rule) continue;
+    const rentOk = bk <= rule.max_bruttokalt_eur;
+    const sqmOk = sqmNum === null || sqmNum <= rule.max_sqm;
+    if (rentOk && sqmOk) {
       return bg;
     }
   }
@@ -122,8 +132,8 @@ export async function recalculateAllListings(city = null) {
   const fallbackRules = rulesByCity.get('gelsenkirchen') || [];
 
   const selectQuery = city
-    ? `SELECT id, city, cold_rent, additional_costs FROM listings WHERE LOWER(city) = LOWER($1)`
-    : `SELECT id, city, cold_rent, additional_costs FROM listings`;
+    ? `SELECT id, city, cold_rent, additional_costs, sqm FROM listings WHERE LOWER(city) = LOWER($1)`
+    : `SELECT id, city, cold_rent, additional_costs, sqm FROM listings`;
   const selectParams = city ? [city] : [];
 
   const { rows: listings } = await pool.query(selectQuery, selectParams);
@@ -135,7 +145,7 @@ export async function recalculateAllListings(city = null) {
     for (const item of listings) {
       const cityRules = rulesByCity.get((item.city || 'Gelsenkirchen').toLowerCase()) || fallbackRules;
       const bruttokalt = computeBruttokalt(item.cold_rent, item.additional_costs);
-      const matchedBg = findMatchedMinBgSize(bruttokalt, cityRules);
+      const matchedBg = findMatchedMinBgSize(bruttokalt, cityRules, item.sqm);
 
       await client.query(
         `UPDATE listings

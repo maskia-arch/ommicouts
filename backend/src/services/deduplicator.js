@@ -195,8 +195,9 @@ async function mergeUserReferencesAndMarkOffline(winner, loser, rules = null) {
   const nextBruttokalt = computeBruttokalt(coldRent, nextAdditional);
 
   let nextBgSize = winner.matched_min_bg_size ?? null;
+  const nextSqm = winner.sqm ?? loser.sqm ?? null;
   if (Array.isArray(rules) && rules.length > 0 && nextAdditional !== winnerNk) {
-    nextBgSize = findMatchedMinBgSize(nextBruttokalt, rules);
+    nextBgSize = findMatchedMinBgSize(nextBruttokalt, rules, nextSqm);
   }
 
   await pool.query(

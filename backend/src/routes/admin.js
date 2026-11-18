@@ -493,7 +493,7 @@ router.patch('/listings/:id', async (req, res) => {
     const city = req.body.city !== undefined ? String(req.body.city).trim() : existing.city;
     const calculatedBruttokalt = computeBruttokalt(coldRent, additionalCosts);
     const rules = await getRulesForCity(city);
-    const matchedMinBgSize = findMatchedMinBgSize(calculatedBruttokalt, rules);
+    const matchedMinBgSize = findMatchedMinBgSize(calculatedBruttokalt, rules, sqm);
 
     const { rows } = await pool.query(
       `UPDATE listings

@@ -171,6 +171,8 @@ export interface ListingsResponse {
   city: string;
   bg_size: number;
   benefit_type: 'sgb2' | 'sgb12';
+  min_rooms?: number;
+  min_sqm?: number;
   rule: KduRule;
   tolerance_limit_eur: number;
   include_tolerance: boolean;
