@@ -150,6 +150,18 @@ test('isListingOfflineHtml detects 404, redirects, and offline markers', () => {
     true
   );
   assert.equal(
+    isListingOfflineHtml('<h1 id="viewad-title" class="boxedarticle--title" itemprop="name" data-soldlabel="Nicht mehr verfügbar">Frisch renovierte Wohnung | 48 m²</h1>', 'https://www.kleinanzeigen.de/s-anzeige/frisch-renovierte-wohnung/3541643180-203-1008', 200, 'kleinanzeigen').offline,
+    true
+  );
+  assert.equal(
+    isListingOfflineHtml('<div><span class="badge-overlay">Gelöscht</span><p>Dieses Inserat wurde gelöscht</p></div>', 'https://www.kleinanzeigen.de/s-anzeige/x/2', 200, 'kleinanzeigen').offline,
+    true
+  );
+  assert.equal(
+    isListingOfflineHtml('<div>Das Angebot wurde deaktiviert</div>', 'https://www.immowelt.de/expose/12345', 200, 'immowelt').offline,
+    true
+  );
+  assert.equal(
     isListingOfflineHtml('<div>Aktives Angebot</div>', 'https://www.kleinanzeigen.de/s-anzeige/x/1', 200, 'kleinanzeigen').offline,
     false
   );

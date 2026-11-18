@@ -1847,23 +1847,52 @@ export function isListingOfflineHtml(html, finalUrl, statusCode, portal) {
   }
 
   const lowerHtml = String(html || '').toLowerCase();
+
+  // Explicit sold/deleted attributes (e.g. Kleinanzeigen data-soldlabel="Nicht mehr verfügbar")
+  if (
+    lowerHtml.includes('data-soldlabel') ||
+    lowerHtml.includes('data-sold="true"') ||
+    lowerHtml.includes('data-is-active="false"')
+  ) {
+    return { offline: true, reason: 'Portal Status (data-soldlabel / nicht mehr verfügbar / gelöscht)' };
+  }
+
   const offlineMarkers = [
     'inserat ist nicht mehr verfügbar',
+    'inserat nicht mehr verfügbar',
     'anzeige ist nicht mehr verfügbar',
     'anzeige nicht mehr verfügbar',
+    'wohnung ist nicht mehr verfügbar',
+    'objekt ist nicht mehr verfügbar',
+    'dieses angebot ist nicht mehr verfügbar',
+    'dieses angebot ist leider nicht mehr verfügbar',
+    'dieses angebot wurde beendet',
     'dieses inserat wurde gelöscht',
+    'dieses inserat existiert nicht mehr',
+    'diese anzeige existiert nicht mehr',
+    'leider wurde die gesuchte anzeige nicht gefunden',
+    'leider wurde keine anzeige gefunden',
     'seite nicht gefunden',
     '404 - page not found',
     'listing is no longer available',
     'anzeige ist leider nicht mehr verfügbar',
-    'diese anzeige existiert nicht mehr',
     'anzeige ist nicht mehr aktiv',
+    'das angebot ist nicht mehr aktiv',
     'anzeige wurde gelöscht',
+    'inserat wurde gelöscht',
+    'wurde vom anbieter gelöscht',
+    'wurde vom nutzer gelöscht',
+    'wurde gelöscht',
     'anzeige ist deaktiviert',
-    'dieses angebot ist leider nicht mehr verfügbar',
-    'leider wurde die gesuchte anzeige nicht gefunden',
-    'leider wurde keine anzeige gefunden',
-    'objekt ist nicht mehr verfügbar',
+    'das inserat wurde deaktiviert',
+    'das angebot wurde deaktiviert',
+    'angebot deaktiviert',
+    'inserat deaktiviert',
+    'immobilie ist nicht mehr online',
+    'angebot ist nicht mehr online',
+    'nicht mehr online',
+    'nicht mehr verfügbar',
+    'nicht mehr verfuegbar',
     'expose nicht gefunden',
     '404 page - quoka',
     'status-deleted',

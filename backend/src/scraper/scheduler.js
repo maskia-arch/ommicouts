@@ -92,10 +92,10 @@ export async function reloadSchedules() {
     scheduledTasks.push(task);
   }
 
-  // Phase B Reconciler every 2 hours (17 */2 * * *) so offline/deleted listings disappear promptly
-  const reconcileTask = cron.schedule('17 */2 * * *', async () => {
+  // Phase B Reconciler runs hourly (17 * * * *) so offline/deleted listings disappear promptly
+  const reconcileTask = cron.schedule('17 * * * *', async () => {
     try {
-      await runReconciler({ batchLimit: 150 });
+      await runReconciler({ batchLimit: 100 });
     } catch (err) {
       console.error('[Scheduler] Fehler beim Reconciler:', err.message);
     }

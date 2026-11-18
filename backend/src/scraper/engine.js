@@ -426,7 +426,7 @@ export async function runDeltaPoll({ configId = null } = {}) {
         const zipPrefixes = await getCityZipPrefixes(targetCity);
         let consecutiveKnown = 0;
 
-        for (const page of [1, 2]) {
+        for (const page of [1, 2, 3]) {
           if (stoppedEarly) break;
 
           let candidates = [];
@@ -517,11 +517,7 @@ export async function runDeltaPoll({ configId = null } = {}) {
                 `UPDATE listings SET last_seen_at = NOW() WHERE external_id = $1`,
                 [candidate.externalId]
               );
-
-              if (allowEarlyStop && consecutiveKnown >= 6) {
-                stoppedEarly = true;
-                break;
-              }
+              // Process all candidates on every scanned page so no listings are skipped
               continue;
             }
 
@@ -635,7 +631,7 @@ export async function runDeltaPoll({ configId = null } = {}) {
             }
           }
 
-          if (!stoppedEarly && page === 1) {
+          if (!stoppedEarly && page < 3) {
             await sleepJitter(cfg.jitter_min_ms, cfg.jitter_max_ms);
           }
         }
